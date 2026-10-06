@@ -1,0 +1,257 @@
+openapi: 3.1.0
+info:
+  title: FluxGram Appearance API
+  version: 1.0.0
+  description: Read-only profile appearance contract for FluxGram clients.
+paths:
+  /v1/profiles/{peer_type}/{peer_id}:
+    get:
+      operationId: getProfile
+      summary: Get one peer profile
+      parameters:
+        - $ref: "#/components/parameters/PeerType"
+        - $ref: "#/components/parameters/PeerId"
+      responses:
+        "200":
+          description: Profile lookup result, including a negative result when no profile exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SingleProfileResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /v1/profiles:batch:
+    post:
+      operationId: getProfilesBatch
+      summary: Get up to 100 peer profiles
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchProfileRequest"
+      responses:
+        "200":
+          description: Ordered profile lookup results for the requested peers.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchProfileResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+components:
+  parameters:
+    PeerType:
+      name: peer_type
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/PeerType"
+    PeerId:
+      name: peer_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/PeerId"
+  responses:
+    BadRequest:
+      description: Invalid peer key or request body.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    PeerType:
+      type: string
+      enum:
+        - user
+        - group
+        - channel
+    DecimalId:
+      type: string
+      pattern: "^[1-9][0-9]*$"
+      description: Positive Telegram identifier encoded as a decimal string.
+    PeerId:
+      type: string
+      maxLength: 16
+      pattern: "^[1-9][0-9]*$"
+      description: Positive Telegram peer identifier within the 52-bit Bot API range.
+      x-maximum-decimal: "4503599627370495"
+    Revision:
+      type: string
+      pattern: "^(0|[1-9][0-9]*)$"
+      description: Monotonic revision encoded as a decimal string.
+    StableId:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: "^[a-z0-9][a-z0-9_-]*$"
+    PeerKey:
+      type: object
+      additionalProperties: false
+      required:
+        - peer_type
+        - peer_id
+      properties:
+        peer_type:
+          $ref: "#/components/schemas/PeerType"
+        peer_id:
+          $ref: "#/components/schemas/PeerId"
+    Badge:
+      type: object
+      additionalProperties: false
+      required:
+        - badge_id
+        - custom_emoji_document_id
+        - title
+        - description
+        - particles
+      properties:
+        badge_id:
+          $ref: "#/components/schemas/StableId"
+        custom_emoji_document_id:
+          $ref: "#/components/schemas/DecimalId"
+        title:
+          type: string
+          minLength: 1
+          maxLength: 64
+        description:
+          type: string
+          maxLength: 256
+        particles:
+          type: boolean
+        expires_at:
+          anyOf:
+            - type: string
+              format: date-time
+            - type: "null"
+    Design:
+      type: object
+      additionalProperties: false
+      properties:
+        design_id:
+          $ref: "#/components/schemas/StableId"
+        palette_id:
+          $ref: "#/components/schemas/StableId"
+        pattern_id:
+          $ref: "#/components/schemas/StableId"
+        avatar_frame_id:
+          $ref: "#/components/schemas/StableId"
+        badge_style_id:
+          $ref: "#/components/schemas/StableId"
+      anyOf:
+        - required:
+            - design_id
+        - required:
+            - palette_id
+        - required:
+            - pattern_id
+        - required:
+            - avatar_frame_id
+        - required:
+            - badge_style_id
+    PeerProfile:
+      type: object
+      additionalProperties: false
+      required:
+        - badges
+        - design
+      properties:
+        badges:
+          type: array
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/Badge"
+        design:
+          anyOf:
+            - $ref: "#/components/schemas/Design"
+            - type: "null"
+      anyOf:
+        - properties:
+            badges:
+              minItems: 1
+        - properties:
+            design:
+              $ref: "#/components/schemas/Design"
+    PeerProfileResult:
+      type: object
+      additionalProperties: false
+      required:
+        - peer
+        - revision
+        - expires_at
+        - profile
+      properties:
+        peer:
+          $ref: "#/components/schemas/PeerKey"
+        revision:
+          $ref: "#/components/schemas/Revision"
+        expires_at:
+          type: string
+          format: date-time
+        profile:
+          anyOf:
+            - $ref: "#/components/schemas/PeerProfile"
+            - type: "null"
+    SingleProfileResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - minimum_renderer_version
+        - result
+      properties:
+        schema_version:
+          type: integer
+          const: 1
+        minimum_renderer_version:
+          type: integer
+          minimum: 1
+        result:
+          $ref: "#/components/schemas/PeerProfileResult"
+    BatchProfileRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - peers
+      properties:
+        peers:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/PeerKey"
+    BatchProfileResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - minimum_renderer_version
+        - results
+      properties:
+        schema_version:
+          type: integer
+          const: 1
+        minimum_renderer_version:
+          type: integer
+          minimum: 1
+        results:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/PeerProfileResult"
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+      properties:
+        code:
+          $ref: "#/components/schemas/StableId"
+        message:
+          type: string
+          minLength: 1
+          maxLength: 256
