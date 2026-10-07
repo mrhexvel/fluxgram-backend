@@ -4,7 +4,7 @@ from aiogram import Bot
 
 from fluxgram_backend.settings import Settings
 
-ALLOWED_UPDATES = ["message"]
+ALLOWED_UPDATES = ["message", "callback_query"]
 
 
 class WebhookClient(Protocol):

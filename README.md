@@ -15,7 +15,7 @@ uv run ruff check .
 uv run mypy src tests
 ```
 
-Runtime configuration is read from environment variables. `DATABASE_URL` must use the `postgresql+asyncpg` driver. The bot process additionally requires `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET`; webhook registration also requires an HTTPS `TELEGRAM_WEBHOOK_BASE_URL`.
+Runtime configuration is read from environment variables. `DATABASE_URL` must use the `postgresql+asyncpg` driver. The bot process additionally requires `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` and a comma-separated `TELEGRAM_ADMIN_IDS` allowlist; webhook registration also requires an HTTPS `TELEGRAM_WEBHOOK_BASE_URL`.
 
 Compose uses local `fluxgram` database credentials by default. `DATABASE_URL` addresses PostgreSQL from the host, while `COMPOSE_DATABASE_URL` addresses the `postgres` service from containers. When PostgreSQL credentials are overridden, update both percent-encoded URLs.
 
@@ -30,6 +30,12 @@ uv run python -m fluxgram_backend webhook info
 Migrations and webhook registration are explicit commands. They are not run while API or bot replicas start.
 
 The appearance database keeps a monotonic revision per canonical peer. Administrative mutations, their operation IDs and append-only audit snapshots commit in one transaction. Reusing an operation ID with the same intent returns its stored result; reusing it for another intent is rejected. Rollback restores a previous appearance as a new revision and never rewrites audit history.
+
+Bot commands are accepted only from allowlisted users in private chats. Run `/admin` to open the inline control panel. The panel asks only for a numeric Telegram user ID; actions, badges, positions, expiry and confirmations are selected with inline buttons. The initial migration adds the built-in `developer` badge definition.
+
+```text
+/admin
+```
 
 For local PostgreSQL 18:
 

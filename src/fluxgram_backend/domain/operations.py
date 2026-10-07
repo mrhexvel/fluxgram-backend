@@ -1,6 +1,8 @@
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 
+from fluxgram_backend.domain.appearance import BadgeAssignment, ProfileDesign
 from fluxgram_backend.domain.peer import FluxGramPeerKey
 
 
@@ -32,6 +34,22 @@ class OperationResult:
     peer: FluxGramPeerKey
     revision: int
     replayed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileSummary:
+    peer: FluxGramPeerKey
+    revision: int
+    badges: tuple[BadgeAssignment, ...]
+    design: ProfileDesign | None
+
+
+@dataclass(frozen=True, slots=True)
+class AuditEntry:
+    operation_id: str
+    operation_type: str
+    actor_id: int | None
+    occurred_at: datetime
 
 
 class AppearanceOperationError(Exception):

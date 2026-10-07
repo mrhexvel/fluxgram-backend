@@ -1,7 +1,7 @@
 import asyncio
 from typing import Any
 
-from fluxgram_backend.bot.webhook import get_webhook_info, set_webhook
+from fluxgram_backend.bot.webhook import ALLOWED_UPDATES, get_webhook_info, set_webhook
 from fluxgram_backend.settings import Settings
 
 
@@ -42,6 +42,7 @@ def test_set_webhook_uses_fixed_route_and_secret() -> None:
     assert client.url == "https://example.ngrok.app/webhooks/telegram"
     assert client.secret == "webhook-secret"
     assert not client.closed
+    assert ALLOWED_UPDATES == ["message", "callback_query"]
 
 
 def test_get_webhook_info_returns_public_metadata() -> None:

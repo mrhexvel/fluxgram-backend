@@ -15,12 +15,14 @@ from fluxgram_backend.database.models import (
     PeerProfileRecord,
     ProfileDesignRecord,
 )
-from fluxgram_backend.domain.appearance import BadgeAssignment, ProfileDesign
+from fluxgram_backend.domain.appearance import BadgeAssignment, BadgeDefinition, ProfileDesign
 from fluxgram_backend.domain.operations import (
     AppearanceNotFound,
+    AuditEntry,
     OperationConflict,
     OperationContext,
     OperationResult,
+    ProfileSummary,
     RollbackConflict,
 )
 from fluxgram_backend.domain.peer import FluxGramPeerKey, PeerMigration, PeerType
@@ -31,6 +33,90 @@ Snapshot = dict[str, Any]
 class AppearanceService:
     def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
         self._sessions = sessions
+
+    async def list_badge_definitions(self) -> tuple[BadgeDefinition, ...]:
+        async with self._sessions() as session:
+            records = await session.scalars(
+                select(BadgeDefinitionRecord).order_by(BadgeDefinitionRecord.badge_id)
+            )
+            return tuple(
+                BadgeDefinition(
+                    badge_id=record.badge_id,
+                    custom_emoji_document_id=record.custom_emoji_document_id,
+                    title=record.title,
+                    description=record.description,
+                    particles=record.particles,
+                )
+                for record in records
+            )
+
+    async def get_profile(self, peer: FluxGramPeerKey) -> ProfileSummary | None:
+        async with self._sessions() as session:
+            resolved_peer = await self._resolve_alias(session, peer)
+            profile = await session.get(
+                PeerProfileRecord,
+                (resolved_peer.peer_type, resolved_peer.peer_id),
+            )
+            if profile is None:
+                return None
+
+            snapshot = await self._snapshot(session, resolved_peer)
+            badges = tuple(
+                BadgeAssignment(
+                    badge_id=value["badge_id"],
+                    position=value["position"],
+                    expires_at=(
+                        datetime.fromisoformat(value["expires_at"])
+                        if value["expires_at"] is not None
+                        else None
+                    ),
+                )
+                for value in snapshot["badges"]
+            )
+            design_value = snapshot["design"]
+            design = ProfileDesign(**design_value) if design_value is not None else None
+            return ProfileSummary(
+                peer=resolved_peer,
+                revision=profile.revision,
+                badges=badges,
+                design=design,
+            )
+
+    async def get_history(
+        self,
+        peer: FluxGramPeerKey,
+        limit: int = 10,
+    ) -> tuple[AuditEntry, ...]:
+        if not 1 <= limit <= 50:
+            raise ValueError("history limit must be between 1 and 50")
+
+        async with self._sessions() as session:
+            resolved_peer = await self._resolve_alias(session, peer)
+            rows = await session.execute(
+                select(AuditLogRecord, OperationRecord)
+                .join(
+                    OperationRecord,
+                    OperationRecord.operation_id == AuditLogRecord.operation_id,
+                )
+                .where(
+                    AuditLogRecord.resource_type == "peer_profile",
+                    AuditLogRecord.resource_key["peer_type"].as_string()
+                    == resolved_peer.peer_type.value,
+                    AuditLogRecord.resource_key["peer_id"].as_string()
+                    == str(resolved_peer.peer_id),
+                )
+                .order_by(AuditLogRecord.id.desc())
+                .limit(limit)
+            )
+            return tuple(
+                AuditEntry(
+                    operation_id=operation.operation_id,
+                    operation_type=operation.operation_type,
+                    actor_id=audit.actor_id,
+                    occurred_at=audit.occurred_at,
+                )
+                for audit, operation in rows
+            )
 
     async def assign_badge(
         self,
@@ -541,6 +627,17 @@ class AppearanceService:
             )
             .with_for_update()
         )
+
+    async def _resolve_alias(
+        self,
+        session: AsyncSession,
+        peer: FluxGramPeerKey,
+    ) -> FluxGramPeerKey:
+        alias = await session.get(PeerAliasRecord, (peer.peer_type, peer.peer_id))
+        if alias is None:
+            return peer
+
+        return FluxGramPeerKey(alias.target_peer_type, alias.target_peer_id)
 
     async def _snapshot(self, session: AsyncSession, peer: FluxGramPeerKey) -> Snapshot:
         badges = list(

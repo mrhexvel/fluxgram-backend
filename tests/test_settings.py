@@ -79,6 +79,19 @@ def test_settings_build_webhook_url() -> None:
     assert settings.webhook_url() == "https://example.ngrok.app/base/webhooks/telegram"
 
 
+def test_settings_parse_admin_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_ADMIN_IDS", "1001, 1002")
+
+    settings = Settings()
+
+    assert settings.telegram_admin_ids == frozenset({1001, 1002})
+
+
+def test_settings_reject_non_positive_admin_id() -> None:
+    with pytest.raises(ValidationError):
+        Settings.model_validate({"telegram_admin_ids": [0]})
+
+
 @pytest.mark.parametrize("secret", ["", "contains space", "contains.dot", "a" * 257])
 def test_settings_reject_invalid_webhook_secret(secret: str) -> None:
     with pytest.raises(ValidationError):

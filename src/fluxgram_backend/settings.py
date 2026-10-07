@@ -1,8 +1,8 @@
 import re
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, HttpUrl, SecretStr, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     bot_host: str = "127.0.0.1"
     bot_port: int = Field(default=8081, ge=1, le=65535)
     telegram_bot_token: SecretStr | None = None
+    telegram_admin_ids: Annotated[frozenset[int], NoDecode] = frozenset()
     telegram_webhook_base_url: HttpUrl | None = None
     telegram_webhook_secret: SecretStr | None = None
 
@@ -47,6 +48,22 @@ class Settings(BaseSettings):
     def validate_webhook_base_url(cls, value: HttpUrl | None) -> HttpUrl | None:
         if value is not None and value.scheme != "https":
             raise ValueError("telegram_webhook_base_url must use HTTPS")
+
+        return value
+
+    @field_validator("telegram_admin_ids", mode="before")
+    @classmethod
+    def parse_admin_ids(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+
+        return value
+
+    @field_validator("telegram_admin_ids")
+    @classmethod
+    def validate_admin_ids(cls, value: frozenset[int]) -> frozenset[int]:
+        if any(admin_id <= 0 for admin_id in value):
+            raise ValueError("telegram_admin_ids must contain positive identifiers")
 
         return value
 

@@ -37,6 +37,7 @@ services:
       BOT_HOST: 0.0.0.0
       DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql+asyncpg://fluxgram:fluxgram@postgres:5432/fluxgram}
       ENVIRONMENT: development
+      TELEGRAM_ADMIN_IDS: ${TELEGRAM_ADMIN_IDS:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
     ports:

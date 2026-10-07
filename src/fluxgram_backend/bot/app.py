@@ -9,6 +9,9 @@ from aiogram.types import Update
 from fastapi import FastAPI, Header, HTTPException, Request, status
 from pydantic import ValidationError
 
+from fluxgram_backend.application.appearance import AppearanceService
+from fluxgram_backend.bot.admin import create_admin_router
+from fluxgram_backend.bot.admin.service import AdminAppearanceService
 from fluxgram_backend.database.connection import Database
 from fluxgram_backend.health import DatabaseResource, install_health_routes
 from fluxgram_backend.log_config import configure_logging
@@ -20,6 +23,7 @@ def create_bot_app(
     database: DatabaseResource | None = None,
     bot: Bot | None = None,
     dispatcher: Dispatcher | None = None,
+    appearance_service: AdminAppearanceService | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings()
     configure_logging(resolved_settings.log_level)
@@ -28,6 +32,20 @@ def create_bot_app(
     resolved_dispatcher = dispatcher or Dispatcher()
     webhook_secret = resolved_settings.require_webhook_secret()
     owns_bot = bot is None
+
+    if dispatcher is None:
+        if appearance_service is None:
+            if not isinstance(resolved_database, Database):
+                raise RuntimeError("An appearance service is required for a custom database")
+
+            appearance_service = AppearanceService(resolved_database.sessions)
+
+        resolved_dispatcher.include_router(
+            create_admin_router(
+                appearance_service,
+                resolved_settings.telegram_admin_ids,
+            )
+        )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
