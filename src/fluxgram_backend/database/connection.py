@@ -3,7 +3,7 @@ import asyncio
 from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
 
 class Database:
@@ -16,6 +16,7 @@ class Database:
                 "timeout": readiness_timeout,
             },
         )
+        self.sessions = async_sessionmaker(self._engine, expire_on_commit=False)
         self._readiness_timeout = readiness_timeout
 
     async def is_ready(self) -> bool:

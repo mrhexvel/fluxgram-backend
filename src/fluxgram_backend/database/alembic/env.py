@@ -5,10 +5,10 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from fluxgram_backend.database.metadata import metadata
+from fluxgram_backend.database.models import BadgeDefinitionRecord
 
 config = context.config
-target_metadata = metadata
+target_metadata = BadgeDefinitionRecord.metadata
 
 
 def run_migrations_offline() -> None:
