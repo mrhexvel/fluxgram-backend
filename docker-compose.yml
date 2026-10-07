@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:18-bookworm
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-fluxgram}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fluxgram}
+      POSTGRES_USER: ${POSTGRES_USER:-fluxgram}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fluxgram} -d ${POSTGRES_DB:-fluxgram}"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+
+  api:
+    profiles: ["api"]
+    build: .
+    command: ["python", "-m", "fluxgram_backend", "api"]
+    environment:
+      API_HOST: 0.0.0.0
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql+asyncpg://fluxgram:fluxgram@postgres:5432/fluxgram}
+      ENVIRONMENT: development
+    ports:
+      - "${API_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  bot:
+    profiles: ["bot"]
+    build: .
+    command: ["python", "-m", "fluxgram_backend", "bot"]
+    environment:
+      BOT_HOST: 0.0.0.0
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql+asyncpg://fluxgram:fluxgram@postgres:5432/fluxgram}
+      ENVIRONMENT: development
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+    ports:
+      - "${BOT_PORT:-8081}:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  migrate:
+    profiles: ["tools"]
+    build: .
+    command: ["python", "-m", "fluxgram_backend", "migrate"]
+    environment:
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql+asyncpg://fluxgram:fluxgram@postgres:5432/fluxgram}
+      ENVIRONMENT: development
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
