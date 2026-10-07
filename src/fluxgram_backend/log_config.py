@@ -25,11 +25,18 @@ class LoguruInterceptHandler(logging.Handler):
 
 def configure_logging(level: str) -> None:
     logger.remove()
+    logger.configure(extra={"request_id": "-"})
     logger.add(
         sys.stderr,
         level=level,
         backtrace=False,
         diagnose=False,
+        format=(
+            "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+            "<level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:"
+            "<cyan>{line}</cyan> | request_id={extra[request_id]} - "
+            "<level>{message}</level>"
+        ),
     )
 
     handler = LoguruInterceptHandler()

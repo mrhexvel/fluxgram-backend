@@ -11,19 +11,41 @@ paths:
       parameters:
         - $ref: "#/components/parameters/PeerType"
         - $ref: "#/components/parameters/PeerId"
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/IfNoneMatch"
       responses:
         "200":
           description: Profile lookup result, including a negative result when no profile exists.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/SingleProfileResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "304":
+          description: The profile representation matches If-None-Match.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /v1/profiles:batch:
     post:
       operationId: getProfilesBatch
       summary: Get up to 100 peer profiles
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
       requestBody:
         required: true
         content:
@@ -33,12 +55,19 @@ paths:
       responses:
         "200":
           description: Ordered profile lookup results for the requested peers.
+          headers:
+            X-Request-ID:
+              $ref: "#/components/headers/RequestId"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControl"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/BatchProfileResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/RateLimited"
 components:
   parameters:
     PeerType:
@@ -53,9 +82,58 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/PeerId"
+    RequestId:
+      name: X-Request-ID
+      in: header
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: "^[A-Za-z0-9._-]+$"
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      schema:
+        type: string
+  headers:
+    RequestId:
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    ETag:
+      required: true
+      schema:
+        type: string
+    CacheControl:
+      required: true
+      schema:
+        type: string
+    RetryAfter:
+      required: true
+      schema:
+        type: integer
+        minimum: 1
   responses:
     BadRequest:
       description: Invalid peer key or request body.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/json:
+          schema:
+              $ref: "#/components/schemas/ErrorResponse"
+    RateLimited:
+      description: Per-client request limit exceeded.
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestId"
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
       content:
         application/json:
           schema:

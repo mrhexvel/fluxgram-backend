@@ -1,8 +1,8 @@
 # FluxGram Backend
 
-Backend services and API contracts for FluxGram profiles and badges.
+Backend services and public read API for FluxGram profiles and badges.
 
-Stage 1 established canonical peer identifiers, the Appearance API contract and versioned fixtures. The backend foundation provides separate API and Telegram webhook processes, PostgreSQL readiness checks, Loguru output and explicit operational commands. Database entities and appearance operations are introduced by the next stage from `docs/fluxgram-appearance-backend.md`.
+The backend provides separate public API and Telegram webhook processes, PostgreSQL-backed appearance operations, audit history and explicit operational commands. Public profile responses contain renderer-ready badge definitions and resolve migrated group aliases to their canonical peer keys.
 
 ## Development
 
@@ -16,6 +16,8 @@ uv run mypy src tests
 ```
 
 Runtime configuration is read from environment variables. `DATABASE_URL` must use the `postgresql+asyncpg` driver. The bot process additionally requires `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` and a comma-separated `TELEGRAM_ADMIN_IDS` allowlist; webhook registration also requires an HTTPS `TELEGRAM_WEBHOOK_BASE_URL`.
+
+Public API cache and rate-limit settings are configured with `API_CACHE_TTL_SECONDS`, `API_NEGATIVE_CACHE_TTL_SECONDS`, `API_RATE_LIMIT_REQUESTS`, `API_RATE_LIMIT_WINDOW_SECONDS` and `API_RATE_LIMIT_MAX_CLIENTS`.
 
 Compose uses local `fluxgram` database credentials by default. `DATABASE_URL` addresses PostgreSQL from the host, while `COMPOSE_DATABASE_URL` addresses the `postgres` service from containers. When PostgreSQL credentials are overridden, update both percent-encoded URLs.
 

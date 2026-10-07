@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     database_url: SecretStr | None = None
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8080, ge=1, le=65535)
+    api_cache_ttl_seconds: int = Field(default=300, ge=1, le=86400)
+    api_negative_cache_ttl_seconds: int = Field(default=60, ge=1, le=3600)
+    api_rate_limit_requests: int = Field(default=120, ge=1, le=100000)
+    api_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
+    api_rate_limit_max_clients: int = Field(default=10000, ge=1, le=1000000)
     bot_host: str = "127.0.0.1"
     bot_port: int = Field(default=8081, ge=1, le=65535)
     telegram_bot_token: SecretStr | None = None

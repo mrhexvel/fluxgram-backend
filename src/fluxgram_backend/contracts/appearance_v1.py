@@ -119,3 +119,8 @@ class BatchProfileResponse(ContractModel):
     schema_version: Literal[1]
     minimum_renderer_version: Annotated[int, Field(ge=1)]
     results: Annotated[list[PeerProfileResultDto], Field(min_length=1, max_length=100)]
+
+
+class ErrorResponse(ContractModel):
+    code: StableId
+    message: Annotated[str, Field(min_length=1, max_length=256)]

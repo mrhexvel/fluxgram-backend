@@ -96,3 +96,18 @@ def test_settings_reject_non_positive_admin_id() -> None:
 def test_settings_reject_invalid_webhook_secret(secret: str) -> None:
     with pytest.raises(ValidationError):
         Settings.model_validate({"telegram_webhook_secret": secret})
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "api_cache_ttl_seconds",
+        "api_negative_cache_ttl_seconds",
+        "api_rate_limit_requests",
+        "api_rate_limit_window_seconds",
+        "api_rate_limit_max_clients",
+    ],
+)
+def test_settings_reject_non_positive_api_limits(field: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings.model_validate({field: 0})
