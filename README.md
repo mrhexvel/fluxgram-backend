@@ -31,7 +31,7 @@ uv run python -m fluxgram_backend webhook info
 
 Migrations and webhook registration are explicit commands. They are not run while API or bot replicas start.
 
-The appearance database keeps a monotonic revision per canonical peer. Administrative mutations, their operation IDs and append-only audit snapshots commit in one transaction. Reusing an operation ID with the same intent returns its stored result; reusing it for another intent is rejected. Rollback restores a previous appearance as a new revision and never rewrites audit history.
+The appearance database keeps a monotonic revision per canonical peer. Administrative mutations, their operation IDs and append-only audit snapshots commit in one transaction. Changes to a badge definition increment the revisions of profiles which use that badge. Reusing an operation ID with the same intent returns its stored result; reusing it for another intent is rejected. Rollback restores a previous appearance as a new revision and never rewrites audit history.
 
 Bot commands are accepted only from allowlisted users in private chats. Run `/admin` to open the inline control panel. The panel asks only for a numeric Telegram user ID; actions, badges, positions, expiry and confirmations are selected with inline buttons. The initial migration adds the built-in `developer` badge definition.
 

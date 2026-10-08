@@ -15,3 +15,7 @@ def test_migration_assets_are_packaged_with_database_module() -> None:
         "versions",
         "20261007_0002_seed_badges.py",
     ).is_file()
+    assert migration_root.joinpath(
+        "versions",
+        "20261008_0003_dynamic_badge_definitions.py",
+    ).is_file()

@@ -322,6 +322,55 @@ def test_concurrent_duplicate_and_group_migration_are_atomic() -> None:
 
 
 @pytest.mark.integration
+def test_badge_definition_changes_bump_assigned_profile_revisions() -> None:
+    database_url = require_database_url()
+    run_migrations(Settings.model_validate({"database_url": database_url}))
+
+    async def check() -> None:
+        engine = create_async_engine(database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        peer = FluxGramPeerKey(PeerType.USER, 51006)
+        badge_id = "stage5-definition"
+
+        try:
+            async with sessions.begin() as session:
+                await seed_badge(session, badge_id)
+                session.add(
+                    PeerProfileRecord(
+                        peer_type=peer.peer_type,
+                        peer_id=peer.peer_id,
+                        revision=1,
+                    )
+                )
+                await session.flush()
+                session.add(
+                    PeerBadgeRecord(
+                        peer_type=peer.peer_type,
+                        peer_id=peer.peer_id,
+                        badge_id=badge_id,
+                        position=0,
+                    )
+                )
+
+            async with sessions.begin() as session:
+                definition = await session.get(BadgeDefinitionRecord, badge_id)
+                assert definition is not None
+                definition.description = "Updated integration fixture"
+
+            async with sessions() as session:
+                profile = await session.get(
+                    PeerProfileRecord,
+                    (peer.peer_type, peer.peer_id),
+                )
+
+            assert profile is not None and profile.revision == 2
+        finally:
+            await engine.dispose()
+
+    asyncio.run(check())
+
+
+@pytest.mark.integration
 def test_audit_log_rejects_mutation() -> None:
     database_url = require_database_url()
     run_migrations(Settings.model_validate({"database_url": database_url}))
