@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from aiogram import Bot, Dispatcher
+from aiogram.methods import SendMessage, SetMyCommands
 from aiogram.methods.base import TelegramMethod
 from aiogram.types import Update
 
@@ -13,6 +14,10 @@ from fluxgram_backend.bot.admin import (
     ExpiryChoice,
     PositionChoice,
     create_admin_router,
+)
+from fluxgram_backend.bot.admin.custom_emoji_handlers import (
+    CUSTOM_EMOJI_MISSING,
+    CUSTOM_EMOJI_PROMPT,
 )
 from fluxgram_backend.bot.admin.formatting import (
     format_history,
@@ -149,6 +154,51 @@ async def test_middleware_blocks_non_admin_without_running_handlers(
     assert call_bot.await_count == 1
 
 
+@pytest.mark.anyio
+async def test_emoji_id_command_waits_for_custom_emoji_and_returns_document_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    methods: list[TelegramMethod[Any]] = []
+
+    async def call_bot(
+        bot: Bot,
+        method: TelegramMethod[Any],
+        request_timeout: int | None = None,
+    ) -> Any:
+        methods.append(method)
+        return True
+
+    monkeypatch.setattr(Bot, "__call__", call_bot)
+    appearance = FakeAppearanceService()
+    dispatcher = Dispatcher()
+    dispatcher.include_router(create_admin_router(appearance, frozenset({1001})))
+    bot = Bot("123456:abcdefghijklmnopqrstuvwxyzABCDEFGHI")
+
+    await dispatcher.emit_startup(bot=bot)
+    await dispatcher.feed_update(bot, message_update(20, 1001, "/emoji_id"))
+    await dispatcher.feed_update(bot, message_update(21, 1001, "Обычный текст"))
+    await dispatcher.feed_update(
+        bot,
+        custom_emoji_update(22, 1001, ("5373141891321699086", "123456789")),
+    )
+    answers_after_flow = len([method for method in methods if isinstance(method, SendMessage)])
+    await dispatcher.feed_update(
+        bot,
+        custom_emoji_update(23, 1001, ("999",)),
+    )
+    await dispatcher.emit_shutdown(bot=bot)
+    await bot.session.close()
+
+    answers = [method for method in methods if isinstance(method, SendMessage)]
+    commands = next(method for method in methods if isinstance(method, SetMyCommands))
+
+    assert [command.command for command in commands.commands] == ["admin", "emoji_id"]
+    assert answers[-3].text == CUSTOM_EMOJI_PROMPT
+    assert answers[-2].text == CUSTOM_EMOJI_MISSING
+    assert answers[-1].text == "5373141891321699086\n123456789"
+    assert len(answers) == answers_after_flow
+
+
 def test_profile_history_and_menu_helpers() -> None:
     peer = FluxGramPeerKey(PeerType.USER, 42)
     profile = ProfileSummary(
@@ -188,6 +238,41 @@ def message_update(update_id: int, user_id: int, text: str) -> Update:
                     "first_name": "Admin",
                 },
                 "text": text,
+            },
+        }
+    )
+
+
+def custom_emoji_update(
+    update_id: int,
+    user_id: int,
+    document_ids: tuple[str, ...],
+) -> Update:
+    text = "🙂" * len(document_ids)
+    entities = [
+        {
+            "type": "custom_emoji",
+            "offset": index * 2,
+            "length": 2,
+            "custom_emoji_id": document_id,
+        }
+        for index, document_id in enumerate(document_ids)
+    ]
+
+    return Update.model_validate(
+        {
+            "update_id": update_id,
+            "message": {
+                "message_id": update_id,
+                "date": 0,
+                "chat": {"id": user_id, "type": "private"},
+                "from": {
+                    "id": user_id,
+                    "is_bot": False,
+                    "first_name": "Admin",
+                },
+                "text": text,
+                "entities": entities,
             },
         }
     )

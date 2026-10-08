@@ -2,6 +2,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 
 class AdminFlow(StatesGroup):
+    custom_emoji = State()
     profile_peer = State()
     assign_peer = State()
     assign_badge = State()

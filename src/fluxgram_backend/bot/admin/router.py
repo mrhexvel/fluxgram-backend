@@ -5,6 +5,7 @@ from aiogram.types import BotCommand, CallbackQuery, Message
 
 from fluxgram_backend.bot.admin.badge_handlers import register_badge_handlers
 from fluxgram_backend.bot.admin.common import edit_callback
+from fluxgram_backend.bot.admin.custom_emoji_handlers import register_custom_emoji_handlers
 from fluxgram_backend.bot.admin.history_handlers import register_history_handlers
 from fluxgram_backend.bot.admin.keyboards import menu_keyboard
 from fluxgram_backend.bot.admin.middleware import AdminAccessMiddleware
@@ -24,7 +25,10 @@ def create_admin_router(
     @router.startup()
     async def register_commands(bot: Bot) -> None:
         await bot.set_my_commands(
-            [BotCommand(command="admin", description="Открыть панель FluxGram")]
+            [
+                BotCommand(command="admin", description="Открыть панель FluxGram"),
+                BotCommand(command="emoji_id", description="Узнать ID кастомного эмодзи"),
+            ]
         )
 
     @router.message(Command("admin"))
@@ -37,6 +41,7 @@ def create_admin_router(
         await state.clear()
         await edit_callback(query, "Панель FluxGram", menu_keyboard())
 
+    register_custom_emoji_handlers(router)
     register_profile_handlers(router, appearance)
     register_badge_handlers(router, appearance)
     register_history_handlers(router, appearance)
