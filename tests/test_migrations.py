@@ -19,3 +19,19 @@ def test_migration_assets_are_packaged_with_database_module() -> None:
         "versions",
         "20261008_0003_dynamic_badge_definitions.py",
     ).is_file()
+    assert migration_root.joinpath(
+        "versions",
+        "20261010_0004_seed_fluxgram_user_1.py",
+    ).is_file()
+    assert migration_root.joinpath(
+        "versions",
+        "20261015_0005_seed_love_mans.py",
+    ).is_file()
+    assert migration_root.joinpath(
+        "versions",
+        "20261015_0006_update_love_mans_emoji.py",
+    ).is_file()
+    assert migration_root.joinpath(
+        "versions",
+        "20261016_0007_seed_donate.py",
+    ).is_file()

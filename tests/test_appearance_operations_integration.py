@@ -434,7 +434,66 @@ def test_migration_downgrade_and_upgrade_round_trip() -> None:
     config = build_migration_config(settings)
 
     command.downgrade(config, "base")
+    command.upgrade(config, "20261015_0005")
+
+    async def seed_assignment() -> None:
+        engine = create_async_engine(database_url)
+
+        try:
+            async with AsyncSession(engine) as session, session.begin():
+                badge = await session.get(BadgeDefinitionRecord, "love_mans")
+
+                assert badge is not None
+                assert badge.custom_emoji_document_id == 5208431738061082997
+
+                session.add(
+                    PeerProfileRecord(
+                        peer_type=PeerType.USER,
+                        peer_id=5391949976,
+                        revision=3,
+                    )
+                )
+                await session.flush()
+
+                session.add(
+                    PeerBadgeRecord(
+                        peer_type=PeerType.USER,
+                        peer_id=5391949976,
+                        badge_id="love_mans",
+                        position=0,
+                        expires_at=None,
+                    )
+                )
+        finally:
+            await engine.dispose()
+
+    asyncio.run(seed_assignment())
     command.upgrade(config, "head")
+
+    async def check() -> None:
+        engine = create_async_engine(database_url)
+
+        try:
+            async with AsyncSession(engine) as session:
+                badge = await session.get(BadgeDefinitionRecord, "love_mans")
+
+                assert badge is not None
+                assert badge.custom_emoji_document_id == 5373141891321699086
+                assert badge.title == "Люблю масло"
+                assert badge.description == "Аппетитные мужики..."
+                assert badge.particles
+
+                profile = await session.get(
+                    PeerProfileRecord,
+                    (PeerType.USER, 5391949976),
+                )
+
+                assert profile is not None
+                assert profile.revision == 4
+        finally:
+            await engine.dispose()
+
+    asyncio.run(check())
 
 
 async def seed_badge(session: AsyncSession, badge_id: str) -> None:
