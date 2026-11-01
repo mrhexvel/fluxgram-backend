@@ -34,10 +34,10 @@ class PostgresReputationRecordReader:
         if record is None:
             return None
 
-        return _signed_record(record)
+        return signed_record_from_row(record)
 
 
-def _signed_record(record: PluginReputationRecord) -> SignedReputationRecord:
+def signed_record_from_row(record: PluginReputationRecord) -> SignedReputationRecord:
     response = ReputationResponse.decode(record.response)
     envelope = SignatureEnvelope.decode(record.envelope)
     developer_key_id = record.developer_key_id or None

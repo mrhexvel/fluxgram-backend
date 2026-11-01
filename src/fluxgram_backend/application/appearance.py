@@ -517,7 +517,7 @@ class AppearanceService:
     ) -> OperationResult | None:
         await session.execute(
             text("SELECT pg_advisory_xact_lock(hashtextextended(:operation_id, 0))"),
-            {"operation_id": context.operation_id},
+            {"operation_id": f"operation:{context.operation_id}"},
         )
         operation = await session.get(OperationRecord, context.operation_id)
         if operation is None:

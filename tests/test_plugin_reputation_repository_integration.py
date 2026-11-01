@@ -11,7 +11,8 @@ from cryptography.hazmat.primitives.asymmetric.utils import (
     decode_dss_signature,
     encode_dss_signature,
 )
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from fluxgram_backend.database.migrations import build_migration_config
@@ -92,7 +93,11 @@ def test_reputation_repository_returns_latest_exact_record_and_writes_audit() ->
                             actor_id=None,
                             rollbackable=False,
                             reverts_operation_id=None,
-                            result={"revision": revision},
+                            result={
+                                "archive_sha256": archive_sha256,
+                                "developer_key_id": None,
+                                "revision": revision,
+                            },
                         )
                     )
                     session.add(
@@ -138,6 +143,56 @@ def test_reputation_repository_returns_latest_exact_record_and_writes_audit() ->
             assert audits[1].after_value["envelope_sha256"] == hashlib.sha256(
                 envelope_bytes
             ).hexdigest()
+
+            invalid_operation_id = f"{operation_prefix}:invalid"
+            invalid_response = ReputationResponse(
+                archive_sha256,
+                None,
+                2,
+                1_700_000_000_002,
+                1_700_086_400_002,
+                ArchiveStatus.CLEAR,
+                KeyStatus.NOT_APPLICABLE,
+            )
+            with pytest.raises(DBAPIError, match="operation is invalid"):
+                async with sessions.begin() as session:
+                    session.add(
+                        OperationRecord(
+                            operation_id=invalid_operation_id,
+                            operation_type="publish_plugin_reputation",
+                            request_fingerprint="0" * 64,
+                            actor_type="system",
+                            actor_id=None,
+                            rollbackable=False,
+                            reverts_operation_id=None,
+                            result={"revision": 2},
+                        )
+                    )
+                    session.add(
+                        PluginReputationRecord(
+                            archive_sha256=archive_sha256,
+                            developer_key_id="",
+                            revision=2,
+                            issued_at_millis=invalid_response.issued_at_millis,
+                            expires_at_millis=invalid_response.expires_at_millis,
+                            archive_status=int(invalid_response.archive_status),
+                            key_status=int(invalid_response.key_status),
+                            authority_key_id=authority_key_id,
+                            response=invalid_response.encode(),
+                            envelope=sign_response(invalid_response, private_key, public_key),
+                            operation_id=invalid_operation_id,
+                        )
+                    )
+
+            with pytest.raises(DBAPIError, match="operation is immutable"):
+                async with sessions.begin() as session:
+                    await session.execute(
+                        text(
+                            "UPDATE operations SET actor_type = 'telegram_admin', actor_id = 1 "
+                            "WHERE operation_id = :operation_id"
+                        ),
+                        {"operation_id": f"{operation_prefix}:1"},
+                    )
         finally:
             await transaction.rollback()
             await connection.close()

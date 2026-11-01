@@ -1,6 +1,21 @@
 from importlib.resources import files
 
 
+def test_plugin_reputation_hardening_validates_legacy_rows() -> None:
+    migration = files("fluxgram_backend.database").joinpath(
+        "alembic",
+        "versions",
+        "20261101_0009_harden_plugin_reputation_publication.py",
+    )
+
+    source = migration.read_text(encoding="utf-8")
+
+    assert "LOCK TABLE public.plugin_reputation_records" in source
+    assert "existing plugin reputation operation is invalid" in source
+    assert "operation.result IS DISTINCT FROM jsonb_build_object" in source
+    assert "FOR UPDATE" in source
+
+
 def test_migration_assets_are_packaged_with_database_module() -> None:
     migration_root = files("fluxgram_backend.database").joinpath("alembic")
 
@@ -38,4 +53,8 @@ def test_migration_assets_are_packaged_with_database_module() -> None:
     assert migration_root.joinpath(
         "versions",
         "20261101_0008_plugin_reputation_records.py",
+    ).is_file()
+    assert migration_root.joinpath(
+        "versions",
+        "20261101_0009_harden_plugin_reputation_publication.py",
     ).is_file()

@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from fluxgram_backend.database.models import PluginReputationRecord
-from fluxgram_backend.database.plugin_reputation import _signed_record
+from fluxgram_backend.database.plugin_reputation import signed_record_from_row
 from fluxgram_backend.reputation.protocol import ProtocolError
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,7 +28,7 @@ def test_stored_record_metadata_must_match_signed_bytes() -> None:
         operation_id="test:matching",
     )
 
-    signed = _signed_record(record)
+    signed = signed_record_from_row(record)
 
     assert signed.response == bytes.fromhex(golden["response"])
     assert signed.envelope == bytes.fromhex(golden["envelope"])
@@ -36,4 +36,4 @@ def test_stored_record_metadata_must_match_signed_bytes() -> None:
     record.revision = 6
 
     with pytest.raises(ProtocolError, match="metadata"):
-        _signed_record(record)
+        signed_record_from_row(record)

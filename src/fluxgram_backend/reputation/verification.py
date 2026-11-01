@@ -43,7 +43,7 @@ def verify_signed_record(
         raise VerificationError("Unsupported reputation signature algorithm")
 
     public_key = _load_public_key(envelope.public_key)
-    key_id = P256_KEY_PREFIX + hashlib.sha256(envelope.public_key).hexdigest()
+    key_id = p256_key_id(envelope.public_key)
     if key_id != authority_key_id:
         raise VerificationError("Unexpected reputation authority")
 
@@ -86,6 +86,11 @@ def canonical_message(
             encoded_response,
         )
     )
+
+
+def p256_key_id(encoded: bytes) -> str:
+    _load_public_key(encoded)
+    return P256_KEY_PREFIX + hashlib.sha256(encoded).hexdigest()
 
 
 def _load_public_key(encoded: bytes) -> ec.EllipticCurvePublicKey:
