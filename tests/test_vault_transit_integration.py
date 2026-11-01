@@ -1,5 +1,6 @@
 import asyncio
 import os
+from pathlib import Path
 from uuid import uuid4
 
 import httpx
@@ -8,11 +9,14 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import Prehashed
 
+from fluxgram_backend.adapters.vault_agent_token import VaultAgentTokenFileProvider
 from fluxgram_backend.adapters.vault_transit import VaultTransitAuthoritySigner
 
 
 @pytest.mark.integration
-def test_vault_transit_signs_prehashed_digest_with_fixed_p256_key_version() -> None:
+def test_vault_transit_signs_prehashed_digest_with_fixed_p256_key_version(
+    tmp_path: Path,
+) -> None:
     address = os.environ.get("TEST_VAULT_ADDR")
     token = os.environ.get("TEST_VAULT_TOKEN")
     if address is None or token is None:
@@ -21,6 +25,9 @@ def test_vault_transit_signs_prehashed_digest_with_fixed_p256_key_version() -> N
     mount = f"fluxgram-{uuid4().hex}"
     key_name = "reputation"
     digest = bytes(range(32))
+    token_file = tmp_path / "token"
+    token_file.write_text(token, encoding="ascii")
+    token_file.chmod(0o600)
 
     async def check() -> None:
         async with httpx.AsyncClient(timeout=5, follow_redirects=False) as client:
@@ -45,16 +52,13 @@ def test_vault_transit_signs_prehashed_digest_with_fixed_p256_key_version() -> N
                 )
                 assert rotate_response.status_code == 200
 
-                async def token_provider() -> str:
-                    return token
-
                 signer = VaultTransitAuthoritySigner(
                     client,
                     address,
                     mount,
                     key_name,
                     1,
-                    token_provider,
+                    VaultAgentTokenFileProvider(token_file),
                 )
                 public_key_bytes = await signer.get_public_key()
                 signature = await signer.sign_sha256(digest)

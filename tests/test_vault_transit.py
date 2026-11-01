@@ -27,10 +27,10 @@ def test_vault_transit_signer_uses_fixed_key_version_and_prehashed_digest() -> N
 
     def handle(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        assert request.headers["X-Vault-Token"] == "test-token"
         assert request.headers["X-Vault-Namespace"] == "team/fluxgram"
 
         if request.method == "GET":
+            assert request.headers["X-Vault-Token"] == "metadata-token"
             return _json_response(
                 {
                     "data": {
@@ -41,6 +41,7 @@ def test_vault_transit_signer_uses_fixed_key_version_and_prehashed_digest() -> N
                 }
             )
 
+        assert request.headers["X-Vault-Token"] == "sign-token"
         body = json.loads(request.content)
         assert body == {
             "input": base64.b64encode(digest).decode("ascii"),
@@ -54,6 +55,11 @@ def test_vault_transit_signer_uses_fixed_key_version_and_prehashed_digest() -> N
         )
 
     async def check() -> None:
+        tokens = iter(("metadata-token", "sign-token"))
+
+        async def rotating_token() -> str:
+            return next(tokens)
+
         async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
             signer = VaultTransitAuthoritySigner(
                 client,
@@ -61,7 +67,7 @@ def test_vault_transit_signer_uses_fixed_key_version_and_prehashed_digest() -> N
                 "transit",
                 "reputation",
                 3,
-                _test_token,
+                rotating_token,
                 namespace="team/fluxgram",
             )
             public_key = await signer.get_public_key()
