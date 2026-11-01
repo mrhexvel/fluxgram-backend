@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Identity,
+    LargeBinary,
     SmallInteger,
     String,
     UniqueConstraint,
@@ -224,6 +225,72 @@ class AuditLogRecord(Base):
     actor_type: Mapped[str] = mapped_column(String(32))
     actor_id: Mapped[int | None] = mapped_column(BigInteger)
     occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.transaction_timestamp(),
+    )
+
+
+class PluginReputationRecord(Base):
+    __tablename__ = "plugin_reputation_records"
+    __table_args__ = (
+        CheckConstraint(
+            "archive_sha256 ~ '^[0-9a-f]{64}$'",
+            name="archive_sha256_format",
+        ),
+        CheckConstraint(
+            "developer_key_id = '' OR developer_key_id ~ '^p256:[0-9a-f]{64}$'",
+            name="developer_key_id_format",
+        ),
+        CheckConstraint("revision >= 0", name="revision_non_negative"),
+        CheckConstraint(
+            "issued_at_millis >= 0 "
+            "AND expires_at_millis > issued_at_millis "
+            "AND expires_at_millis - issued_at_millis <= 2592000000",
+            name="validity_range",
+        ),
+        CheckConstraint("archive_status IN (1, 2)", name="archive_status_valid"),
+        CheckConstraint("key_status IN (0, 1, 2)", name="key_status_valid"),
+        CheckConstraint(
+            "(developer_key_id = '' AND key_status = 0) "
+            "OR (developer_key_id <> '' AND key_status IN (1, 2))",
+            name="key_status_matches_identity",
+        ),
+        CheckConstraint(
+            "authority_key_id ~ '^p256:[0-9a-f]{64}$'",
+            name="authority_key_id_format",
+        ),
+        CheckConstraint(
+            "octet_length(response) > 0 AND octet_length(response) <= 128",
+            name="response_size",
+        ),
+        CheckConstraint(
+            "octet_length(envelope) > 0 AND octet_length(envelope) <= 512",
+            name="envelope_size",
+        ),
+        UniqueConstraint("operation_id", name="uq_plugin_reputation_records_operation_id"),
+    )
+
+    archive_sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    developer_key_id: Mapped[str] = mapped_column(
+        String(69),
+        primary_key=True,
+        default="",
+        server_default="",
+    )
+    revision: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    issued_at_millis: Mapped[int] = mapped_column(BigInteger)
+    expires_at_millis: Mapped[int] = mapped_column(BigInteger)
+    archive_status: Mapped[int] = mapped_column(SmallInteger)
+    key_status: Mapped[int] = mapped_column(SmallInteger)
+    authority_key_id: Mapped[str] = mapped_column(String(69))
+    response: Mapped[bytes] = mapped_column(LargeBinary(128))
+    envelope: Mapped[bytes] = mapped_column(LargeBinary(512))
+    operation_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("operations.operation_id", ondelete="RESTRICT"),
+        unique=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.transaction_timestamp(),
     )

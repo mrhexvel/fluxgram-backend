@@ -35,3 +35,7 @@ def test_migration_assets_are_packaged_with_database_module() -> None:
         "versions",
         "20261016_0007_seed_donate.py",
     ).is_file()
+    assert migration_root.joinpath(
+        "versions",
+        "20261101_0008_plugin_reputation_records.py",
+    ).is_file()
