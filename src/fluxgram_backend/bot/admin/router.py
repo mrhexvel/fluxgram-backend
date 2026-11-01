@@ -10,11 +10,16 @@ from fluxgram_backend.bot.admin.history_handlers import register_history_handler
 from fluxgram_backend.bot.admin.keyboards import menu_keyboard
 from fluxgram_backend.bot.admin.middleware import AdminAccessMiddleware
 from fluxgram_backend.bot.admin.profile_handlers import register_profile_handlers
-from fluxgram_backend.bot.admin.service import AdminAppearanceService
+from fluxgram_backend.bot.admin.reputation_handlers import register_reputation_handlers
+from fluxgram_backend.bot.admin.service import (
+    AdminAppearanceService,
+    AdminReputationDecisionService,
+)
 
 
 def create_admin_router(
     appearance: AdminAppearanceService,
+    reputation: AdminReputationDecisionService,
     admin_ids: frozenset[int],
 ) -> Router:
     router = Router(name="fluxgram_admin")
@@ -45,4 +50,5 @@ def create_admin_router(
     register_profile_handlers(router, appearance)
     register_badge_handlers(router, appearance)
     register_history_handlers(router, appearance)
+    register_reputation_handlers(router, reputation)
     return router

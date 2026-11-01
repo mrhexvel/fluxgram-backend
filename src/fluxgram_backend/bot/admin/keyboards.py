@@ -6,6 +6,9 @@ from fluxgram_backend.bot.admin.callbacks import (
     ExpiryChoice,
     PositionChoice,
     RemoveChoice,
+    ReputationKeyChoice,
+    ReputationStatusChoice,
+    ReputationValidityChoice,
     RollbackChoice,
 )
 from fluxgram_backend.domain.appearance import BadgeDefinition
@@ -24,6 +27,7 @@ def menu_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="Удалить бейдж", callback_data="remove"),
             ],
             [InlineKeyboardButton(text="Откатить операцию", callback_data="rollback")],
+            [InlineKeyboardButton(text="Репутация плагина", callback_data="reputation")],
         ]
     )
 
@@ -109,5 +113,59 @@ def confirmation_keyboard(action: str) -> InlineKeyboardMarkup:
                 ),
                 InlineKeyboardButton(text="Отмена", callback_data="menu"),
             ]
+        ]
+    )
+
+
+def reputation_key_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Без ключа разработчика",
+                    callback_data=ReputationKeyChoice(has_key=False).pack(),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Указать ключ разработчика",
+                    callback_data=ReputationKeyChoice(has_key=True).pack(),
+                )
+            ],
+            [InlineKeyboardButton(text="Назад", callback_data="menu")],
+        ]
+    )
+
+
+def reputation_status_keyboard(target: str) -> InlineKeyboardMarkup:
+    second_text = "Вредоносный" if target == "archive" else "Отозван"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Нет известного отзыва",
+                    callback_data=ReputationStatusChoice(target=target, value=1).pack(),
+                ),
+                InlineKeyboardButton(
+                    text=second_text,
+                    callback_data=ReputationStatusChoice(target=target, value=2).pack(),
+                ),
+            ],
+            [InlineKeyboardButton(text="Назад", callback_data="menu")],
+        ]
+    )
+
+
+def reputation_validity_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"{days} дн.",
+                    callback_data=ReputationValidityChoice(days=days).pack(),
+                )
+                for days in (1, 7, 30)
+            ],
+            [InlineKeyboardButton(text="Назад", callback_data="menu")],
         ]
     )

@@ -3,6 +3,9 @@ from fluxgram_backend.bot.admin.callbacks import (
     Confirmation,
     ExpiryChoice,
     PositionChoice,
+    ReputationKeyChoice,
+    ReputationStatusChoice,
+    ReputationValidityChoice,
 )
 from fluxgram_backend.bot.admin.router import create_admin_router
 
@@ -11,5 +14,8 @@ __all__ = [
     "Confirmation",
     "ExpiryChoice",
     "PositionChoice",
+    "ReputationKeyChoice",
+    "ReputationStatusChoice",
+    "ReputationValidityChoice",
     "create_admin_router",
 ]

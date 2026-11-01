@@ -1,5 +1,7 @@
 from typing import Protocol
 
+from fluxgram_backend.application.plugin_reputation_decisions import ReputationDecision
+from fluxgram_backend.application.plugin_reputation_publisher import ReputationPublication
 from fluxgram_backend.domain.appearance import BadgeAssignment, BadgeDefinition
 from fluxgram_backend.domain.operations import (
     AuditEntry,
@@ -40,3 +42,11 @@ class AdminAppearanceService(Protocol):
         context: OperationContext,
         original_operation_id: str,
     ) -> OperationResult: ...
+
+
+class AdminReputationDecisionService(Protocol):
+    async def enqueue(
+        self,
+        context: OperationContext,
+        publication: ReputationPublication,
+    ) -> ReputationDecision: ...

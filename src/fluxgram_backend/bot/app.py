@@ -10,8 +10,12 @@ from fastapi import FastAPI, Header, HTTPException, Request, status
 from pydantic import ValidationError
 
 from fluxgram_backend.application.appearance import AppearanceService
+from fluxgram_backend.application.plugin_reputation_decisions import PluginReputationDecisionQueue
 from fluxgram_backend.bot.admin import create_admin_router
-from fluxgram_backend.bot.admin.service import AdminAppearanceService
+from fluxgram_backend.bot.admin.service import (
+    AdminAppearanceService,
+    AdminReputationDecisionService,
+)
 from fluxgram_backend.database.connection import Database
 from fluxgram_backend.health import DatabaseResource, install_health_routes
 from fluxgram_backend.log_config import configure_logging
@@ -24,6 +28,7 @@ def create_bot_app(
     bot: Bot | None = None,
     dispatcher: Dispatcher | None = None,
     appearance_service: AdminAppearanceService | None = None,
+    reputation_service: AdminReputationDecisionService | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings()
     configure_logging(resolved_settings.log_level)
@@ -34,15 +39,21 @@ def create_bot_app(
     owns_bot = bot is None
 
     if dispatcher is None:
-        if appearance_service is None:
+        if appearance_service is None or reputation_service is None:
             if not isinstance(resolved_database, Database):
-                raise RuntimeError("An appearance service is required for a custom database")
+                raise RuntimeError("Admin services are required for a custom database")
 
-            appearance_service = AppearanceService(resolved_database.sessions)
+            if appearance_service is None:
+                appearance_service = AppearanceService(resolved_database.sessions)
+            if reputation_service is None:
+                reputation_service = PluginReputationDecisionQueue(resolved_database.sessions)
 
+        assert appearance_service is not None
+        assert reputation_service is not None
         resolved_dispatcher.include_router(
             create_admin_router(
                 appearance_service,
+                reputation_service,
                 resolved_settings.telegram_admin_ids,
             )
         )

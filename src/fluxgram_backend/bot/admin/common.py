@@ -24,10 +24,11 @@ async def edit_callback(
     query: CallbackQuery,
     text: str,
     keyboard: InlineKeyboardMarkup,
+    parse_mode: str | None = None,
 ) -> None:
     await query.answer()
     if isinstance(query.message, Message):
-        await query.message.edit_text(text, reply_markup=keyboard)
+        await query.message.edit_text(text, reply_markup=keyboard, parse_mode=parse_mode)
 
 
 async def run_mutation(

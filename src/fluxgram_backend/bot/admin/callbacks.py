@@ -23,3 +23,16 @@ class RollbackChoice(CallbackData, prefix="fgo"):
 
 class Confirmation(CallbackData, prefix="fgc"):
     action: str
+
+
+class ReputationKeyChoice(CallbackData, prefix="fgk"):
+    has_key: bool
+
+
+class ReputationStatusChoice(CallbackData, prefix="fgs"):
+    target: str
+    value: int
+
+
+class ReputationValidityChoice(CallbackData, prefix="fgv"):
+    days: int
