@@ -16,6 +16,22 @@ def test_plugin_reputation_hardening_validates_legacy_rows() -> None:
     assert "FOR UPDATE" in source
 
 
+def test_plugin_reputation_decisions_serialize_exact_identity_before_sequence() -> None:
+    migration = files("fluxgram_backend.database").joinpath(
+        "alembic",
+        "versions",
+        "20261101_0010_plugin_reputation_decisions.py",
+    )
+
+    source = migration.read_text(encoding="utf-8")
+
+    assert "reputation_decision_identity:" in source
+    assert "pg_advisory_xact_lock" in source
+    lock_position = source.index("pg_advisory_xact_lock")
+    sequence_position = source.index("nextval('plugin_reputation_decision_sequence')")
+    assert lock_position < sequence_position
+
+
 def test_migration_assets_are_packaged_with_database_module() -> None:
     migration_root = files("fluxgram_backend.database").joinpath("alembic")
 
@@ -57,4 +73,8 @@ def test_migration_assets_are_packaged_with_database_module() -> None:
     assert migration_root.joinpath(
         "versions",
         "20261101_0009_harden_plugin_reputation_publication.py",
+    ).is_file()
+    assert migration_root.joinpath(
+        "versions",
+        "20261101_0010_plugin_reputation_decisions.py",
     ).is_file()

@@ -7,14 +7,18 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     Enum,
+    FetchedValue,
     ForeignKey,
     ForeignKeyConstraint,
     Identity,
+    Index,
+    Integer,
     LargeBinary,
     SmallInteger,
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -290,6 +294,127 @@ class PluginReputationRecord(Base):
         ForeignKey("operations.operation_id", ondelete="RESTRICT"),
         unique=True,
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.transaction_timestamp(),
+    )
+
+
+class PluginReputationDecisionRecord(Base):
+    __tablename__ = "plugin_reputation_decisions"
+    __table_args__ = (
+        CheckConstraint(
+            "archive_sha256 ~ '^[0-9a-f]{64}$'",
+            name="archive_sha256_format",
+        ),
+        CheckConstraint(
+            "developer_key_id = '' OR developer_key_id ~ '^p256:[0-9a-f]{64}$'",
+            name="developer_key_id_format",
+        ),
+        CheckConstraint(
+            "issued_at_millis >= 0 "
+            "AND expires_at_millis > issued_at_millis "
+            "AND expires_at_millis - issued_at_millis <= 2592000000",
+            name="validity_range",
+        ),
+        CheckConstraint("archive_status IN (1, 2)", name="archive_status_valid"),
+        CheckConstraint("key_status IN (0, 1, 2)", name="key_status_valid"),
+        CheckConstraint(
+            "(developer_key_id = '' AND key_status = 0) "
+            "OR (developer_key_id <> '' AND key_status IN (1, 2))",
+            name="key_status_matches_identity",
+        ),
+        CheckConstraint(
+            "publication_operation_id <> ''",
+            name="publication_operation_id_non_empty",
+        ),
+        CheckConstraint(
+            "state IN ('pending', 'claimed', 'published', 'failed')",
+            name="state_valid",
+        ),
+        CheckConstraint("attempt_count >= 0", name="attempt_count_non_negative"),
+        CheckConstraint(
+            "lease_token IS NULL OR "
+            "lease_token ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'",
+            name="lease_token_format",
+        ),
+        CheckConstraint(
+            "lease_owner IS NULL OR lease_owner ~ '^[A-Za-z0-9._:-]{1,128}$'",
+            name="lease_owner_format",
+        ),
+        CheckConstraint(
+            "last_error_code IS NULL OR last_error_code ~ '^[a-z][a-z0-9_]{0,63}$'",
+            name="last_error_code_format",
+        ),
+        CheckConstraint(
+            "(state = 'pending' AND lease_token IS NULL AND lease_owner IS NULL "
+            "AND lease_expires_at IS NULL AND published_revision IS NULL "
+            "AND completed_at IS NULL) OR "
+            "(state = 'claimed' AND lease_token IS NOT NULL AND lease_owner IS NOT NULL "
+            "AND lease_expires_at IS NOT NULL AND attempt_count > 0 "
+            "AND last_error_code IS NULL AND published_revision IS NULL "
+            "AND completed_at IS NULL) OR "
+            "(state = 'published' AND lease_token IS NULL AND lease_owner IS NULL "
+            "AND lease_expires_at IS NULL AND last_error_code IS NULL "
+            "AND published_revision IS NOT NULL AND published_revision >= 0 "
+            "AND completed_at IS NOT NULL) OR "
+            "(state = 'failed' AND lease_token IS NULL AND lease_owner IS NULL "
+            "AND lease_expires_at IS NULL AND last_error_code IS NOT NULL "
+            "AND published_revision IS NULL AND completed_at IS NOT NULL)",
+            name="state_fields_consistent",
+        ),
+        UniqueConstraint(
+            "decision_operation_id",
+            name="uq_plugin_reputation_decisions_decision_operation_id",
+        ),
+        UniqueConstraint(
+            "publication_operation_id",
+            name="uq_plugin_reputation_decisions_publication_operation_id",
+        ),
+        Index(
+            "ix_plugin_reputation_decisions_claimable",
+            "available_at",
+            "sequence_id",
+            postgresql_where=text("state IN ('pending', 'claimed')"),
+        ),
+        Index(
+            "ix_plugin_reputation_decisions_identity_order",
+            "archive_sha256",
+            "developer_key_id",
+            "sequence_id",
+            postgresql_where=text("state IN ('pending', 'claimed')"),
+        ),
+    )
+
+    sequence_id: Mapped[int] = mapped_column(
+        BigInteger,
+        FetchedValue(),
+        primary_key=True,
+        autoincrement=False,
+    )
+    decision_operation_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("operations.operation_id", ondelete="RESTRICT"),
+    )
+    publication_operation_id: Mapped[str] = mapped_column(String(128))
+    archive_sha256: Mapped[str] = mapped_column(String(64))
+    developer_key_id: Mapped[str] = mapped_column(String(69), default="", server_default="")
+    issued_at_millis: Mapped[int] = mapped_column(BigInteger)
+    expires_at_millis: Mapped[int] = mapped_column(BigInteger)
+    archive_status: Mapped[int] = mapped_column(SmallInteger)
+    key_status: Mapped[int] = mapped_column(SmallInteger)
+    state: Mapped[str] = mapped_column(String(16), default="pending", server_default="pending")
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.transaction_timestamp(),
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    lease_token: Mapped[str | None] = mapped_column(String(36))
+    lease_owner: Mapped[str | None] = mapped_column(String(128))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error_code: Mapped[str | None] = mapped_column(String(64))
+    published_revision: Mapped[int | None] = mapped_column(BigInteger)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.transaction_timestamp(),

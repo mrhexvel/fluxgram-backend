@@ -1,6 +1,7 @@
 from sqlalchemy import CheckConstraint, ForeignKeyConstraint, UniqueConstraint
 
 from fluxgram_backend.database.metadata import Base
+from fluxgram_backend.database.models import PluginReputationDecisionRecord
 
 
 def test_appearance_schema_contains_expected_tables() -> None:
@@ -11,6 +12,7 @@ def test_appearance_schema_contains_expected_tables() -> None:
         "peer_aliases",
         "peer_badges",
         "peer_profiles",
+        "plugin_reputation_decisions",
         "plugin_reputation_records",
         "profile_designs",
     }
@@ -83,3 +85,30 @@ def test_plugin_reputation_schema_is_bounded_and_operation_scoped() -> None:
         [column.name for column in constraint.columns] == ["operation_id"]
         for constraint in unique_constraints
     )
+
+
+def test_plugin_reputation_decision_schema_bounds_intent_and_state() -> None:
+    assert PluginReputationDecisionRecord.__tablename__ == "plugin_reputation_decisions"
+    table = Base.metadata.tables["plugin_reputation_decisions"]
+    checks = [
+        str(constraint.sqltext)
+        for constraint in table.constraints
+        if isinstance(constraint, CheckConstraint)
+    ]
+    foreign_keys = [
+        constraint
+        for constraint in table.constraints
+        if isinstance(constraint, ForeignKeyConstraint)
+    ]
+
+    assert any("state IN" in value for value in checks)
+    assert any("state = 'claimed'" in value and "lease_token" in value for value in checks)
+    assert any("attempt_count >= 0" in value for value in checks)
+    assert any(
+        [column.name for column in constraint.columns] == ["decision_operation_id"]
+        for constraint in foreign_keys
+    )
+    assert {index.name for index in table.indexes} == {
+        "ix_plugin_reputation_decisions_claimable",
+        "ix_plugin_reputation_decisions_identity_order",
+    }
