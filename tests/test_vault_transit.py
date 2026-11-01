@@ -12,6 +12,7 @@ from fluxgram_backend.adapters.vault_transit import (
     MAX_VAULT_RESPONSE_BYTES,
     VaultTransitAuthoritySigner,
     VaultTransitError,
+    VaultTransitUnavailable,
 )
 from fluxgram_backend.reputation.signing import SignatureEncoding
 
@@ -206,6 +207,26 @@ def test_vault_transit_signer_does_not_follow_redirects() -> None:
                 await signer.get_public_key()
 
         assert [request.url.host for request in requests] == ["vault.example"]
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("status", [401, 403, 408, 429, 500, 503])
+def test_vault_transit_signer_classifies_unavailable_service(status: int) -> None:
+    async def check() -> None:
+        transport = httpx.MockTransport(lambda _: httpx.Response(status))
+        async with httpx.AsyncClient(transport=transport) as client:
+            signer = VaultTransitAuthoritySigner(
+                client,
+                "https://vault.example",
+                "transit",
+                "reputation",
+                1,
+                _test_token,
+            )
+
+            with pytest.raises(VaultTransitUnavailable):
+                await signer.get_public_key()
 
     asyncio.run(check())
 

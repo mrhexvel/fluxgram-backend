@@ -3,7 +3,7 @@ import unicodedata
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from fluxgram_backend.adapters.vault_transit import NAME_PATTERN, NAMESPACE_PATTERN
@@ -36,6 +36,7 @@ class PluginReputationPublisherSettings(BaseSettings):
             raise ValueError("plugin reputation authority key ID is invalid")
 
         return value
+
 
     @field_validator("vault_address")
     @classmethod
@@ -87,4 +88,57 @@ class PluginReputationPublisherSettings(BaseSettings):
         if not value.is_absolute():
             raise ValueError("Vault file paths must be absolute")
 
+        return value
+
+
+class PluginReputationWorkerSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_ignore_empty=True,
+        extra="ignore",
+    )
+
+    plugin_reputation_worker_id: str = Field(pattern=r"^[A-Za-z0-9._:-]{1,128}$")
+    plugin_reputation_worker_lease_seconds: float = Field(default=30, gt=0, le=900)
+    plugin_reputation_worker_renewal_seconds: float = Field(default=10, gt=0, le=899)
+    plugin_reputation_worker_poll_seconds: float = Field(default=1, gt=0, le=60)
+    plugin_reputation_worker_retry_initial_seconds: float = Field(default=1, gt=0, le=86400)
+    plugin_reputation_worker_retry_max_seconds: float = Field(default=60, gt=0, le=86400)
+    plugin_reputation_worker_max_attempts: int = Field(default=10, ge=1, le=100)
+    plugin_reputation_worker_shutdown_grace_seconds: float = Field(default=30, gt=0, le=300)
+
+    @model_validator(mode="after")
+    def validate_intervals(self) -> "PluginReputationWorkerSettings":
+        if (
+            self.plugin_reputation_worker_renewal_seconds
+            * 2
+            > self.plugin_reputation_worker_lease_seconds
+        ):
+            raise ValueError("worker renewal interval must not exceed half the lease")
+        if (
+            self.plugin_reputation_worker_retry_initial_seconds
+            > self.plugin_reputation_worker_retry_max_seconds
+        ):
+            raise ValueError("worker initial retry must not exceed maximum retry")
+
+        return self
+
+
+class PluginReputationProcessSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_ignore_empty=True,
+        extra="ignore",
+    )
+
+    database_url: SecretStr
+    log_level: str = "INFO"
+
+    @field_validator("database_url")
+    @classmethod
+    def validate_database_url(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().startswith("postgresql+asyncpg://"):
+            raise ValueError("database_url must use postgresql+asyncpg")
         return value

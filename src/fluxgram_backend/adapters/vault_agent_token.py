@@ -1,14 +1,20 @@
 import asyncio
+import errno
 import os
 from pathlib import Path
 
 from fluxgram_backend.adapters.secure_file import SecureFileError, read_bounded_regular_file
 from fluxgram_backend.adapters.vault_transit import MAX_VAULT_TOKEN_LENGTH
+from fluxgram_backend.reputation.signing import AuthoritySigningError, AuthoritySigningUnavailable
 
 TOKEN_FILE_MODES = frozenset((0o400, 0o600))
 
 
-class VaultAgentTokenFileError(RuntimeError):
+class VaultAgentTokenFileError(AuthoritySigningError):
+    pass
+
+
+class VaultAgentTokenUnavailable(VaultAgentTokenFileError, AuthoritySigningUnavailable):
     pass
 
 
@@ -31,6 +37,13 @@ class VaultAgentTokenFileProvider:
                 frozenset((os.geteuid(),)),
             )
         except SecureFileError as error:
+            if isinstance(error.__cause__, OSError) and error.__cause__.errno in (
+                errno.ENOENT,
+                errno.ESTALE,
+                errno.EIO,
+                errno.EBUSY,
+            ):
+                raise VaultAgentTokenUnavailable("Vault Agent token file is unavailable") from error
             raise VaultAgentTokenFileError("Vault Agent token file is invalid") from error
 
         if encoded.endswith(b"\r\n"):

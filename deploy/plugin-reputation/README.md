@@ -5,6 +5,36 @@ The tracked Agent-only Compose fragment assumes a Vault service named `vault`, T
 `transit`, the key `plugin-reputation`, and publisher UID/GID `65534`. It pins Vault Agent 1.21.0 by
 image digest. A publisher service is intentionally absent until a separate publisher command exists.
 
+## Publisher Process
+
+The publisher process is started separately from the API and Telegram bot:
+
+```sh
+python -m fluxgram_backend.publisher
+```
+
+It requires these environment variables:
+
+```text
+DATABASE_URL
+PLUGIN_REPUTATION_AUTHORITY_KEY_ID
+PLUGIN_REPUTATION_WORKER_ID
+VAULT_ADDRESS
+VAULT_TRANSIT_MOUNT
+VAULT_TRANSIT_KEY_NAME
+VAULT_TRANSIT_KEY_VERSION
+VAULT_AGENT_TOKEN_FILE
+VAULT_CA_FILE
+```
+
+`PLUGIN_REPUTATION_AUTHORITY_KEY_ID` is the pinned `p256:<sha256-spki>` identity of the Vault
+Transit authority key, not a plugin developer key. `VAULT_AGENT_TOKEN_FILE` points to the Agent token
+sink and must not be replaced by a static `VAULT_TOKEN`. The process also accepts the bounded optional
+worker interval and retry settings documented by `PluginReputationWorkerSettings`.
+
+Missing or invalid configuration exits with code `2` and prints field names only. Values from `.env`,
+database credentials and Vault tokens are never included in the error.
+
 ## Vault Bootstrap
 
 An administrator enables Transit and AppRole, creates a non-exportable P-256 key, uploads

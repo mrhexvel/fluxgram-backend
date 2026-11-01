@@ -4,7 +4,10 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from fluxgram_backend.publisher.settings import PluginReputationPublisherSettings
+from fluxgram_backend.publisher.settings import (
+    PluginReputationPublisherSettings,
+    PluginReputationWorkerSettings,
+)
 
 AUTHORITY_KEY_ID = "p256:" + "a" * 64
 
@@ -87,3 +90,29 @@ def test_publisher_settings_reject_non_production_vault_address(address: str) ->
 def test_publisher_settings_reject_invalid_configuration(field: str, value: object) -> None:
     with pytest.raises(ValidationError):
         PluginReputationPublisherSettings.model_validate({**_valid_settings(), field: value})
+
+
+def test_worker_settings_validate_bounded_intervals() -> None:
+    settings = PluginReputationWorkerSettings.model_validate(
+        {"plugin_reputation_worker_id": "publisher-1"}
+    )
+
+    assert settings.plugin_reputation_worker_lease_seconds == 30
+    assert settings.plugin_reputation_worker_max_attempts == 10
+
+    with pytest.raises(ValidationError, match="half the lease"):
+        PluginReputationWorkerSettings.model_validate(
+            {
+                "plugin_reputation_worker_id": "publisher-1",
+                "plugin_reputation_worker_lease_seconds": 10,
+                "plugin_reputation_worker_renewal_seconds": 10,
+            }
+        )
+    with pytest.raises(ValidationError, match="initial retry"):
+        PluginReputationWorkerSettings.model_validate(
+            {
+                "plugin_reputation_worker_id": "publisher-1",
+                "plugin_reputation_worker_retry_initial_seconds": 10,
+                "plugin_reputation_worker_retry_max_seconds": 1,
+            }
+        )

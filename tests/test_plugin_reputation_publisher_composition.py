@@ -9,6 +9,7 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from fluxgram_backend.application.plugin_reputation_decisions import PluginReputationDecisionQueue
 from fluxgram_backend.application.plugin_reputation_publisher import PluginReputationPublisher
 from fluxgram_backend.publisher import composition
 from fluxgram_backend.publisher.settings import PluginReputationPublisherSettings
@@ -117,6 +118,33 @@ def test_publisher_composition_owns_bounded_tls_client_and_database(
     assert cast(httpx.Timeout, client.kwargs["timeout"]).connect == 7
     assert cast(httpx.Limits, client.kwargs["limits"]).max_connections == 2
     assert cast(httpx.Limits, client.kwargs["limits"]).max_keepalive_connections == 1
+
+
+def test_publisher_runtime_exposes_queue_and_publisher(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    FakeClient.instances.clear()
+    FakeDatabase.instances.clear()
+    monkeypatch.setattr(
+        "fluxgram_backend.publisher.composition.ssl.create_default_context",
+        lambda *, cadata: FakeTlsContext(),
+    )
+    monkeypatch.setattr(
+        "fluxgram_backend.publisher.composition.httpx.AsyncClient",
+        FakeClient,
+    )
+    monkeypatch.setattr(composition, "Database", FakeDatabase)
+
+    async def run() -> None:
+        async with composition.open_plugin_reputation_publisher_runtime(
+            "postgresql+asyncpg://publisher:secret@db/fluxgram",
+            _settings(tmp_path),
+        ) as runtime:
+            assert isinstance(runtime.queue, PluginReputationDecisionQueue)
+            assert isinstance(runtime.publisher, PluginReputationPublisher)
+
+    asyncio.run(run())
 
 
 def test_publisher_composition_closes_resources_after_consumer_failure(

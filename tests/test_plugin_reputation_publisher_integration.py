@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import os
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -15,6 +16,7 @@ from fluxgram_backend.application.plugin_reputation_publisher import (
     ReputationPublication,
     ReputationPublicationConflict,
     ReputationPublicationError,
+    ReputationPublicationExpired,
 )
 from fluxgram_backend.database.migrations import run_migrations
 from fluxgram_backend.database.models import (
@@ -88,19 +90,20 @@ def test_publisher_is_idempotent_revisioned_audited_and_rolls_back_signing_failu
     identity = uuid4().hex
     archive_sha256 = hashlib.sha256(identity.encode()).hexdigest()
     query = ReputationQuery(archive_sha256)
+    now_millis = int(datetime.now(UTC).timestamp() * 1000)
     first_publication = ReputationPublication(
         query,
         ArchiveStatus.CLEAR,
         KeyStatus.NOT_APPLICABLE,
-        1_700_000_000_000,
-        1_700_086_400_000,
+        now_millis - 2_000,
+        now_millis + 86_400_000,
     )
     second_publication = ReputationPublication(
         query,
         ArchiveStatus.MALICIOUS,
         KeyStatus.NOT_APPLICABLE,
-        1_700_000_000_001,
-        1_700_086_400_001,
+        now_millis - 1_000,
+        now_millis + 86_400_001,
     )
 
     async def check() -> None:
@@ -177,8 +180,8 @@ def test_publisher_is_idempotent_revisioned_audited_and_rolls_back_signing_failu
                         query,
                         ArchiveStatus.CLEAR,
                         KeyStatus.NOT_APPLICABLE,
-                        1_700_000_000_002,
-                        1_700_086_400_002,
+                        now_millis - 900,
+                        now_millis + 86_400_002,
                     ),
                 )
 
@@ -196,8 +199,21 @@ def test_publisher_is_idempotent_revisioned_audited_and_rolls_back_signing_failu
                         query,
                         ArchiveStatus.CLEAR,
                         KeyStatus.NOT_APPLICABLE,
-                        1_700_000_000_003,
-                        1_700_086_400_003,
+                        now_millis - 800,
+                        now_millis + 86_400_003,
+                    ),
+                )
+
+            expired_operation_id = f"reputation-publisher:{identity}:expired"
+            with pytest.raises(ReputationPublicationExpired):
+                await publisher.publish(
+                    OperationContext(expired_operation_id, ActorType.SYSTEM, None),
+                    ReputationPublication(
+                        query,
+                        ArchiveStatus.MALICIOUS,
+                        KeyStatus.NOT_APPLICABLE,
+                        now_millis - 2_000,
+                        now_millis - 1_000,
                     ),
                 )
 
@@ -215,11 +231,13 @@ def test_publisher_is_idempotent_revisioned_audited_and_rolls_back_signing_failu
                 )
                 failed_operation = await session.get(OperationRecord, invalid_operation_id)
                 timeout_operation = await session.get(OperationRecord, timeout_operation_id)
+                expired_operation = await session.get(OperationRecord, expired_operation_id)
 
             assert record_count == 2
             assert audit_count == 2
             assert failed_operation is None
             assert timeout_operation is None
+            assert expired_operation is None
         finally:
             await transaction.rollback()
             await connection.close()

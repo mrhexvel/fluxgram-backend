@@ -1,7 +1,7 @@
 import asyncio
 import hashlib
 import os
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import cast
 from uuid import uuid4
 
@@ -30,10 +30,16 @@ from fluxgram_backend.database.models import (
     PluginReputationDecisionRecord,
 )
 from fluxgram_backend.domain.operations import ActorType, OperationContext
+from fluxgram_backend.publisher.worker import (
+    PluginReputationPublisherWorker,
+    PluginReputationWorkerConfig,
+)
 from fluxgram_backend.reputation.protocol import ArchiveStatus, KeyStatus, ReputationQuery
 from fluxgram_backend.reputation.signing import AuthoritySignature, SignatureEncoding
 from fluxgram_backend.reputation.verification import p256_key_id
 from fluxgram_backend.settings import Settings
+
+TEST_NOW_MILLIS = int(datetime.now(UTC).timestamp() * 1000)
 
 
 class FakeAuthoritySigner:
@@ -43,11 +49,13 @@ class FakeAuthoritySigner:
             serialization.Encoding.DER,
             serialization.PublicFormat.SubjectPublicKeyInfo,
         )
+        self.sign_count = 0
 
     async def get_public_key(self) -> bytes:
         return self.public_key
 
     async def sign_sha256(self, digest: bytes) -> AuthoritySignature:
+        self.sign_count += 1
         signature = self.private_key.sign(
             digest,
             ec.ECDSA(Prehashed(hashes.SHA256())),
@@ -60,8 +68,8 @@ def _publication(identity: str, offset: int = 0) -> ReputationPublication:
         ReputationQuery(hashlib.sha256(identity.encode()).hexdigest()),
         ArchiveStatus.CLEAR if offset == 0 else ArchiveStatus.MALICIOUS,
         KeyStatus.NOT_APPLICABLE,
-        1_700_000_000_000 + offset,
-        1_700_086_400_000 + offset,
+        TEST_NOW_MILLIS - 1_000 + offset,
+        TEST_NOW_MILLIS + 86_400_000 + offset,
     )
 
 
@@ -106,6 +114,58 @@ def test_reputation_decision_queue_rejects_invalid_boundaries_before_database_ac
         asyncio.run(queue.claim_next("worker", timedelta(0)))
     with pytest.raises(ValueError, match="error_code"):
         asyncio.run(queue.mark_failed("decision", "lease", "Invalid Error"))
+
+
+@pytest.mark.integration
+def test_publisher_worker_completes_queued_decision() -> None:
+    database_url = os.environ.get("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+
+    run_migrations(Settings.model_validate({"database_url": database_url}))
+    identity = uuid4().hex
+    publication = _publication(identity)
+    context = _context(identity, "worker")
+
+    async def check() -> None:
+        engine = create_async_engine(database_url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        queue = PluginReputationDecisionQueue(sessions)
+        signer = FakeAuthoritySigner()
+        publisher = PluginReputationPublisher(
+            sessions,
+            signer,
+            p256_key_id(signer.public_key),
+        )
+        worker = PluginReputationPublisherWorker(
+            queue,
+            publisher,
+            PluginReputationWorkerConfig(
+                "publisher-integration",
+                timedelta(seconds=10),
+                timedelta(seconds=2),
+                0.1,
+                timedelta(seconds=1),
+                timedelta(seconds=10),
+                3,
+            ),
+        )
+
+        try:
+            queued = await queue.enqueue(context, publication)
+
+            assert await worker.process_next()
+
+            completed = await queue.get(context.operation_id)
+            assert completed is not None
+            assert completed.sequence_id == queued.sequence_id
+            assert completed.state is ReputationDecisionState.PUBLISHED
+            assert completed.published_revision == 0
+            assert signer.sign_count == 1
+        finally:
+            await engine.dispose()
+
+    asyncio.run(check())
 
 
 @pytest.mark.integration

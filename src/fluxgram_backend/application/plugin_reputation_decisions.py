@@ -164,6 +164,15 @@ class PluginReputationDecisionQueue:
 
             return self._decision(record)
 
+    async def current_time_millis(self) -> int:
+        async with self._sessions() as session:
+            value = await session.scalar(
+                select(func.floor(func.extract("epoch", func.clock_timestamp()) * 1000))
+            )
+            if value is None:
+                raise ReputationDecisionError("database time is unavailable")
+            return int(value)
+
     async def claim_next(
         self,
         worker_id: str,

@@ -11,7 +11,12 @@ from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from fluxgram_backend.reputation.signing import AuthoritySignature, SignatureEncoding
+from fluxgram_backend.reputation.signing import (
+    AuthoritySignature,
+    AuthoritySigningError,
+    AuthoritySigningUnavailable,
+    SignatureEncoding,
+)
 
 MAX_VAULT_RESPONSE_BYTES = 64 * 1024
 MAX_VAULT_TOKEN_LENGTH = 8192
@@ -19,7 +24,11 @@ NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 NAMESPACE_PATTERN = re.compile(r"^[A-Za-z0-9_./-]{1,256}$")
 
 
-class VaultTransitError(RuntimeError):
+class VaultTransitError(AuthoritySigningError):
+    pass
+
+
+class VaultTransitUnavailable(VaultTransitError, AuthoritySigningUnavailable):
     pass
 
 
@@ -120,7 +129,10 @@ class VaultTransitAuthoritySigner:
         endpoint: str,
         body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        token = await self._token_provider()
+        try:
+            token = await self._token_provider()
+        except AuthoritySigningUnavailable:
+            raise
         if (
             not isinstance(token, str)
             or not 1 <= len(token) <= MAX_VAULT_TOKEN_LENGTH
@@ -145,6 +157,8 @@ class VaultTransitAuthoritySigner:
                 json=body,
                 follow_redirects=False,
             ) as response:
+                if response.status_code in (401, 403, 408, 429) or response.status_code >= 500:
+                    raise VaultTransitUnavailable("Vault Transit service is unavailable")
                 if response.status_code != 200:
                     raise VaultTransitError(
                         f"Vault Transit request failed with status {response.status_code}"
@@ -172,7 +186,7 @@ class VaultTransitAuthoritySigner:
                         raise VaultTransitError("Vault Transit response exceeds size limit")
                     encoded.extend(chunk)
         except httpx.HTTPError as error:
-            raise VaultTransitError("Vault Transit request failed") from error
+            raise VaultTransitUnavailable("Vault Transit request failed") from error
 
         try:
             payload = json.loads(encoded)

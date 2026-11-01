@@ -14,6 +14,10 @@ class AuthoritySigningError(ValueError):
     pass
 
 
+class AuthoritySigningUnavailable(AuthoritySigningError):
+    pass
+
+
 class SignatureEncoding(StrEnum):
     DER = "der"
     P1363 = "p1363"

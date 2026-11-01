@@ -24,6 +24,7 @@ from fluxgram_backend.reputation.signing import (
     AuthoritySignature,
     AuthoritySigner,
     AuthoritySigningError,
+    AuthoritySigningUnavailable,
     normalize_p256_signature,
 )
 from fluxgram_backend.reputation.verification import (
@@ -40,7 +41,23 @@ class ReputationPublicationError(Exception):
     pass
 
 
-class ReputationPublicationConflict(ReputationPublicationError):
+class ReputationPublicationTransientError(ReputationPublicationError):
+    pass
+
+
+class ReputationPublicationInvalidError(ReputationPublicationError):
+    pass
+
+
+class ReputationPublicationConflict(ReputationPublicationInvalidError):
+    pass
+
+
+class ReputationPublicationExpired(ReputationPublicationInvalidError):
+    pass
+
+
+class ReputationPublicationNotCurrent(ReputationPublicationInvalidError):
     pass
 
 
@@ -105,6 +122,7 @@ class PluginReputationPublisher:
                 return replay
 
             await self._lock_identity(session, publication.query)
+            await self._validate_current(session, publication)
             revision = await self._next_revision(session, publication.query)
             response = ReputationResponse(
                 publication.query.archive_sha256,
@@ -260,13 +278,32 @@ class PluginReputationPublisher:
                     response.issued_at_millis,
                 )
         except TimeoutError as error:
-            raise ReputationPublicationError("Authority signer timed out") from error
+            raise ReputationPublicationTransientError("Authority signer timed out") from error
+        except AuthoritySigningUnavailable as error:
+            raise ReputationPublicationTransientError("Authority signer is unavailable") from error
         except (AuthoritySigningError, ValueError, VerificationError) as error:
-            raise ReputationPublicationError("Authority signature validation failed") from error
-        except Exception as error:
-            raise ReputationPublicationError("Authority signer failed") from error
+            raise ReputationPublicationInvalidError(
+                "Authority signature validation failed"
+            ) from error
 
         return SignedReputationRecord(encoded_response, envelope)
+
+    @staticmethod
+    async def _validate_current(
+        session: AsyncSession,
+        publication: ReputationPublication,
+    ) -> None:
+        now_millis = await session.scalar(
+            select(func.floor(func.extract("epoch", func.clock_timestamp()) * 1000))
+        )
+        if now_millis is None:
+            raise ReputationPublicationError("database time is unavailable")
+
+        current_millis = int(now_millis)
+        if publication.issued_at_millis > current_millis:
+            raise ReputationPublicationNotCurrent("publication is not current yet")
+        if publication.expires_at_millis <= current_millis:
+            raise ReputationPublicationExpired("publication has expired")
 
     @staticmethod
     async def _lock_identity(session: AsyncSession, query: ReputationQuery) -> None:
