@@ -5,9 +5,11 @@ from fastapi import FastAPI
 
 from fluxgram_backend.api.context import RequestContextMiddleware
 from fluxgram_backend.api.errors import install_error_handlers
+from fluxgram_backend.api.plugin_reputation import router as plugin_reputation_router
 from fluxgram_backend.api.profiles import ProfileReader
 from fluxgram_backend.api.profiles import router as profiles_router
 from fluxgram_backend.api.rate_limit import InMemoryRateLimiter, RateLimitMiddleware
+from fluxgram_backend.application.plugin_reputation import PluginReputationService
 from fluxgram_backend.application.profile_queries import ProfileQueryService
 from fluxgram_backend.database.connection import Database
 from fluxgram_backend.health import DatabaseResource, install_health_routes
@@ -20,6 +22,7 @@ def create_api_app(
     database: DatabaseResource | None = None,
     profile_reader: ProfileReader | None = None,
     rate_limiter: InMemoryRateLimiter | None = None,
+    plugin_reputation_service: PluginReputationService | None = None,
 ) -> FastAPI:
     resolved_settings = settings or Settings()
     configure_logging(resolved_settings.log_level)
@@ -41,6 +44,7 @@ def create_api_app(
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         app.state.database = resolved_database
         app.state.profile_reader = resolved_reader
+        app.state.plugin_reputation_service = plugin_reputation_service
 
         try:
             yield
@@ -53,4 +57,6 @@ def create_api_app(
     install_error_handlers(app)
     install_health_routes(app, "api")
     app.include_router(profiles_router)
+    if plugin_reputation_service is not None:
+        app.include_router(plugin_reputation_router)
     return app

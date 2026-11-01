@@ -1,8 +1,13 @@
 # FluxGram Backend
 
-Backend services and public read API for FluxGram profiles and badges.
+Backend services and public read API for FluxGram profiles, badges and plugin reputation.
 
 The backend provides separate public API and Telegram webhook processes, PostgreSQL-backed appearance operations, audit history and explicit operational commands. Public profile responses contain renderer-ready badge definitions and resolve migrated group aliases to their canonical peer keys.
+
+The plugin reputation package currently provides a strict binary read contract and signature
+verification for pre-signed records. Its route is registered only when an explicit read service is
+supplied; production persistence, publishing and authority-key ownership are not part of the API
+process yet.
 
 ## Development
 
