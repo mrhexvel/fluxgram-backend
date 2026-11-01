@@ -62,7 +62,94 @@ services:
     networks:
       - vault
 
+  publisher-worker:
+    image: ${PLUGIN_REPUTATION_PUBLISHER_IMAGE:?set PLUGIN_REPUTATION_PUBLISHER_IMAGE to an immutable digest reference}
+    command: ["python", "-m", "fluxgram_backend.publisher"]
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database-url
+      PLUGIN_REPUTATION_AUTHORITY_KEY_ID: ${PLUGIN_REPUTATION_AUTHORITY_KEY_ID:?set PLUGIN_REPUTATION_AUTHORITY_KEY_ID}
+      PLUGIN_REPUTATION_OPERATIONS_ALLOWED_NETWORK: ${PLUGIN_REPUTATION_OPERATIONS_ALLOWED_NETWORK:?set PLUGIN_REPUTATION_OPERATIONS_ALLOWED_NETWORK}
+      PLUGIN_REPUTATION_OPERATIONS_HOST: 0.0.0.0
+      PLUGIN_REPUTATION_OPERATIONS_MAX_CONNECTIONS: "32"
+      PLUGIN_REPUTATION_OPERATIONS_PORT: "8090"
+      PLUGIN_REPUTATION_READINESS_STALE_SECONDS: "30"
+      PLUGIN_REPUTATION_WORKER_ID: ${PLUGIN_REPUTATION_WORKER_ID:?set PLUGIN_REPUTATION_WORKER_ID}
+      VAULT_ADDRESS: https://vault:8200
+      VAULT_AGENT_TOKEN_FILE: /vault/secrets/token
+      VAULT_CA_FILE: /vault/tls/vault-ca.pem
+      VAULT_TRANSIT_KEY_NAME: plugin-reputation
+      VAULT_TRANSIT_KEY_VERSION: "1"
+      VAULT_TRANSIT_MOUNT: transit
+    user: "65534:65534"
+    init: true
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    cpus: 0.5
+    mem_limit: 256m
+    pids_limit: 128
+    restart: unless-stopped
+    stop_grace_period: 40s
+    expose:
+      - "8090"
+    tmpfs:
+      - /tmp:size=1048576,mode=1700,uid=65534,gid=65534
+    volumes:
+      - type: bind
+        source: ${PLUGIN_REPUTATION_DATABASE_URL_FILE:?set PLUGIN_REPUTATION_DATABASE_URL_FILE}
+        target: /run/secrets/database-url
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${VAULT_AGENT_CA_FILE:?set VAULT_AGENT_CA_FILE}
+        target: /vault/tls/vault-ca.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${VAULT_AGENT_TOKEN_DIR:?set VAULT_AGENT_TOKEN_DIR}
+        target: /vault/secrets
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      vault-agent:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -m
+        - fluxgram_backend.publisher.healthcheck
+        - --host
+        - 127.0.0.1
+        - --port
+        - "8090"
+        - --path
+        - /health/ready
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    networks:
+      - database
+      - monitoring
+      - vault
+
 networks:
+  database:
+    external: true
+    name: ${DATABASE_NETWORK:?set DATABASE_NETWORK}
+  monitoring:
+    external: true
+    name: ${MONITORING_NETWORK:?set MONITORING_NETWORK}
   vault:
     external: true
     name: ${VAULT_NETWORK:?set VAULT_NETWORK}

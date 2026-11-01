@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import os
 from datetime import UTC, datetime
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -17,6 +18,7 @@ from fluxgram_backend.application.plugin_reputation_publisher import (
     ReputationPublicationConflict,
     ReputationPublicationError,
     ReputationPublicationExpired,
+    ReputationPublicationInvalidError,
 )
 from fluxgram_backend.database.migrations import run_migrations
 from fluxgram_backend.database.models import (
@@ -78,6 +80,30 @@ class SlowAuthoritySigner(FakeAuthoritySigner):
     async def sign_sha256(self, digest: bytes) -> AuthoritySignature:
         await asyncio.sleep(1)
         return await super().sign_sha256(digest)
+
+
+@pytest.mark.anyio
+async def test_publisher_signer_check_performs_real_signature_and_rejects_invalid_result() -> None:
+    signer = FakeAuthoritySigner(ec.generate_private_key(ec.SECP256R1()))
+    publisher = PluginReputationPublisher(
+        cast(Any, None),
+        signer,
+        p256_key_id(signer.public_key),
+    )
+
+    await publisher.check_signer()
+
+    assert signer.sign_count == 1
+    assert len(signer.digests[0]) == 32
+
+    invalid_signer = InvalidAuthoritySigner(ec.generate_private_key(ec.SECP256R1()))
+    invalid_publisher = PluginReputationPublisher(
+        cast(Any, None),
+        invalid_signer,
+        p256_key_id(invalid_signer.public_key),
+    )
+    with pytest.raises(ReputationPublicationInvalidError):
+        await invalid_publisher.check_signer()
 
 
 @pytest.mark.integration

@@ -123,6 +123,37 @@ class BlockingPublisher(FakePublisher):
         return _result()
 
 
+class FakeObserver:
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, ...]] = []
+
+    def poll_succeeded(self, claimed: bool) -> None:
+        self.calls.append(("poll", claimed))
+
+    def lease_renewed(self) -> None:
+        self.calls.append(("renewed",))
+
+    def lease_lost(self) -> None:
+        self.calls.append(("lease_lost",))
+
+    def published(self) -> None:
+        self.calls.append(("published",))
+
+    def failed(self, error_code: str) -> None:
+        self.calls.append(("failed", error_code))
+
+    def retried(self) -> None:
+        self.calls.append(("retried",))
+
+    def shutdown_rescheduled(self) -> None:
+        self.calls.append(("shutdown_rescheduled",))
+
+
+class RaisingObserver(FakeObserver):
+    def poll_succeeded(self, claimed: bool) -> None:
+        raise RuntimeError("observer failed")
+
+
 def _result() -> PublishedReputationRecord:
     return PublishedReputationRecord("publication", 0, SignedReputationRecord(b"r", b"e"))
 
@@ -176,12 +207,14 @@ def _config(**values: Any) -> PluginReputationWorkerConfig:
 def _worker(
     queue: FakeQueue,
     publisher: FakePublisher,
+    observer: FakeObserver | None = None,
     **config: Any,
 ) -> PluginReputationPublisherWorker:
     return PluginReputationPublisherWorker(
         cast(Any, queue),
         cast(Any, publisher),
         _config(**config),
+        observer,
     )
 
 
@@ -189,12 +222,14 @@ def _worker(
 async def test_worker_publishes_claimed_decision() -> None:
     queue = FakeQueue(_claimed())
     publisher = FakePublisher(_result())
+    observer = FakeObserver()
 
-    assert await _worker(queue, publisher).process_next()
+    assert await _worker(queue, publisher, observer).process_next()
 
     assert len(publisher.calls) == 1
     assert publisher.calls[0][0].operation_id == "publication"
     assert [call[0] for call in queue.calls] == ["claim", "published"]
+    assert observer.calls == [("poll", True), ("published",)]
 
 
 @pytest.mark.anyio
@@ -222,8 +257,9 @@ async def test_worker_rejects_non_current_decision(
 async def test_worker_reschedules_transient_error_with_bounded_backoff() -> None:
     queue = FakeQueue(_claimed(attempt_count=2))
     publisher = FakePublisher(ReputationPublicationTransientError("unavailable"))
+    observer = FakeObserver()
 
-    assert await _worker(queue, publisher).process_next()
+    assert await _worker(queue, publisher, observer).process_next()
 
     assert queue.calls[-1] == (
         "reschedule",
@@ -232,6 +268,7 @@ async def test_worker_reschedules_transient_error_with_bounded_backoff() -> None
         timedelta(seconds=4),
         "signer_unavailable",
     )
+    assert observer.calls == [("poll", True), ("retried",)]
 
 
 @pytest.mark.anyio
@@ -265,6 +302,15 @@ async def test_worker_does_not_hide_programming_error() -> None:
         await _worker(queue, FakePublisher(RuntimeError("bug"))).process_next()
 
     assert [call[0] for call in queue.calls] == ["claim"]
+
+
+@pytest.mark.anyio
+async def test_worker_observer_failure_does_not_change_publication() -> None:
+    queue = FakeQueue(_claimed())
+
+    assert await _worker(queue, FakePublisher(_result()), RaisingObserver()).process_next()
+
+    assert [call[0] for call in queue.calls] == ["claim", "published"]
 
 
 @pytest.mark.anyio

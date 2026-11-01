@@ -13,6 +13,7 @@ def test_publisher_entrypoint_reports_field_names_without_environment_values(
     monkeypatch.chdir(tmp_path)
     for name in (
         "DATABASE_URL",
+        "DATABASE_URL_FILE",
         "PLUGIN_REPUTATION_AUTHORITY_KEY_ID",
         "PLUGIN_REPUTATION_WORKER_ID",
         "VAULT_ADDRESS",

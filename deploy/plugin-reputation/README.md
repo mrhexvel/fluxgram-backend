@@ -1,9 +1,10 @@
 # Plugin Reputation Publisher
 
 The publisher runs separately from the public API and receives its Vault token from Vault Agent.
-The production-oriented Agent Compose fragment assumes a Vault service named `vault`, Transit
-mounted at `transit`, the key `plugin-reputation`, and publisher UID/GID `65534`. It pins Vault Agent
-1.21.0 by image digest.
+The production-oriented Compose fragment runs Vault Agent and the publisher worker. It assumes a
+Vault service named `vault`, Transit mounted at `transit`, the key `plugin-reputation`, and publisher
+UID/GID `65534`. It pins Vault Agent 1.21.0 by image digest and requires an immutable digest reference
+for the backend image.
 
 ## Local Docker Deployment
 
@@ -68,7 +69,7 @@ python -m fluxgram_backend.publisher
 It requires these environment variables:
 
 ```text
-DATABASE_URL
+DATABASE_URL or DATABASE_URL_FILE
 PLUGIN_REPUTATION_AUTHORITY_KEY_ID
 PLUGIN_REPUTATION_WORKER_ID
 VAULT_ADDRESS
@@ -83,6 +84,8 @@ VAULT_CA_FILE
 Transit authority key, not a plugin developer key. `VAULT_AGENT_TOKEN_FILE` points to the Agent token
 sink and must not be replaced by a static `VAULT_TOKEN`. The process also accepts the bounded optional
 worker interval and retry settings documented by `PluginReputationWorkerSettings`.
+Production uses `DATABASE_URL_FILE`; the direct environment value remains available for local tools.
+The two sources are mutually exclusive.
 
 Missing or invalid configuration exits with code `2` and prints field names only. Values from `.env`,
 database credentials and Vault tokens are never included in the error.
@@ -120,17 +123,19 @@ Vault Agent and the publisher run as UID/GID `65534`. Agent owns a private writa
 directory and a tmpfs-backed token sink directory. The publisher receives only the sink directory as
 a read-only mount. The RoleID file uses mode `0400`; the wrapped SecretID and token sink use `0600`.
 Parent directories are owned by the deployment administrator and are not writable by unrelated
-users or groups.
+users or groups. The database URL is stored separately as one UTF-8 line owned by `65534:65534` with
+mode `0400`; it is mounted only into the worker and is never passed through environment variables.
 
 `compose.vault-agent.yml` mounts only the CA file read-only and the bootstrap and sink directories
 read-write only into Agent. Bind mounts must already exist; Compose does not create missing source
 paths. Their common `/run/fluxgram/vault-agent` parent is a root-owned tmpfs with
 `nodev,nosuid,noexec`; its `bootstrap` and `secrets` children are owned by `65534:65534` with mode
-`0700`. Agent startup fails if either child has another owner or mode. A future publisher container
-must receive only TLS and the sink directory as read-only mounts and must not receive the bootstrap
-directory. The Agent container has a read-only root filesystem, no Linux capabilities, and
+`0700`. Agent startup fails if either child has another owner or mode. The publisher receives only
+the exact database file, TLS CA and sink directory as read-only mounts and does not receive the
+bootstrap directory. Both containers have read-only root filesystems, no Linux capabilities, and
 `no-new-privileges`; read-only tmpfs mounts override the image's `/vault/file` and `/vault/logs`
-volumes. It is limited to half a CPU, 128 MiB of memory, and 64 processes.
+volumes. Agent is limited to half a CPU, 128 MiB of memory and 64 processes; the worker uses half a
+CPU, 256 MiB and 128 processes.
 
 One host setup matching `vault-agent.env.example` is:
 
@@ -138,6 +143,9 @@ One host setup matching `vault-agent.env.example` is:
 mount -t tmpfs -o nodev,nosuid,noexec,mode=0755 tmpfs /run/fluxgram/vault-agent
 install -d -o 65534 -g 65534 -m 0700 /run/fluxgram/vault-agent/bootstrap
 install -d -o 65534 -g 65534 -m 0700 /run/fluxgram/vault-agent/secrets
+install -d -o 65534 -g 65534 -m 0700 /run/fluxgram/publisher
+install -o 65534 -g 65534 -m 0400 /secure/source/database-url \
+  /run/fluxgram/publisher/database-url
 ```
 
 The Agent removes the wrapped SecretID after reading it. A cold restart after token revocation or
@@ -146,15 +154,30 @@ perform AppRole login, SecretID creation, token renewal, or fallback to a static
 Compose health status does not restart an unhealthy container. The deployment orchestrator must
 monitor health, deliver a fresh wrapped SecretID, and explicitly restart Agent after token loss.
 
-Start only the Agent after provisioning the external Vault network and runtime directories:
+Provision the three external Vault, database and monitoring networks before startup. The database
+network must provide the hostname used inside the database URL file. The configured operations CIDR
+must match the dedicated monitoring network and must not overlap the Vault or database networks.
+Start Agent and worker together:
 
 ```sh
 docker compose --env-file deploy/plugin-reputation/vault-agent.env \
-  -f deploy/plugin-reputation/compose.vault-agent.yml up -d vault-agent
+  -f deploy/plugin-reputation/compose.vault-agent.yml up -d
 ```
 
 The healthcheck performs authenticated `lookup-self`; a revoked or expired token does not remain
 healthy merely because the old sink file still exists.
+
+The worker exposes port `8090` only inside its Docker networks and accepts non-loopback clients only
+from `PLUGIN_REPUTATION_OPERATIONS_ALLOWED_NETWORK`, with at most 32 concurrent connections.
+`/health/live` reports the running
+event loop, `/health/ready` requires a recent successful queue poll or lease renewal, and `/metrics`
+returns fixed Prometheus counters without archive, decision, plugin, database or Vault identifiers.
+Compose does not publish this port to the host. An internal monitoring service may scrape it through
+the dedicated monitoring network. Before claiming queue work and every 30 seconds, the worker reads
+the pinned key and performs a real bounded Transit signature check; loss of that capability exits the
+process instead of leaving a false-ready worker. The worker also exits on unknown programming or SQL
+errors and Docker restarts it; an expired claim is recovered through the existing fencing and lease
+state machine.
 
 ## TLS
 

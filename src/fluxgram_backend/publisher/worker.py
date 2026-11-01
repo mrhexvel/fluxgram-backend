@@ -1,8 +1,10 @@
 import asyncio
 import math
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import Protocol
 
 from fluxgram_backend.application.plugin_reputation_decisions import (
     ClaimedReputationDecision,
@@ -45,16 +47,34 @@ class PluginReputationWorkerConfig:
             raise ValueError("worker maximum attempts is invalid")
 
 
+class PluginReputationWorkerObserver(Protocol):
+    def poll_succeeded(self, claimed: bool) -> None: ...
+
+    def lease_renewed(self) -> None: ...
+
+    def lease_lost(self) -> None: ...
+
+    def published(self) -> None: ...
+
+    def failed(self, error_code: str) -> None: ...
+
+    def retried(self) -> None: ...
+
+    def shutdown_rescheduled(self) -> None: ...
+
+
 class PluginReputationPublisherWorker:
     def __init__(
         self,
         queue: PluginReputationDecisionQueue,
         publisher: PluginReputationPublisher,
         config: PluginReputationWorkerConfig,
+        observer: PluginReputationWorkerObserver | None = None,
     ) -> None:
         self._queue = queue
         self._publisher = publisher
         self._config = config
+        self._observer = observer
 
     async def run(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
@@ -70,6 +90,7 @@ class PluginReputationPublisherWorker:
             self._config.worker_id,
             self._config.lease_duration,
         )
+        self._observe(lambda observer: observer.poll_succeeded(claimed is not None))
         if claimed is None:
             return False
 
@@ -85,6 +106,7 @@ class PluginReputationPublisherWorker:
         try:
             result = await self._publish_with_heartbeat(claimed, lease_token)
         except ReputationDecisionLeaseLost:
+            self._observe(lambda observer: observer.lease_lost())
             return True
         except asyncio.CancelledError:
             await self._reschedule_shutdown(claimed, lease_token)
@@ -105,6 +127,7 @@ class PluginReputationPublisherWorker:
                 lease_token,
                 result,
             )
+            self._observe(lambda observer: observer.published())
 
         return True
 
@@ -149,6 +172,7 @@ class PluginReputationPublisherWorker:
                 lease_token,
                 self._config.lease_duration,
             )
+            self._observe(lambda observer: observer.lease_renewed())
 
     async def _retry(
         self,
@@ -174,6 +198,7 @@ class PluginReputationPublisherWorker:
             retry_delay,
             "signer_unavailable",
         )
+        self._observe(lambda observer: observer.retried())
 
     async def _mark_failed(
         self,
@@ -186,6 +211,7 @@ class PluginReputationPublisherWorker:
             lease_token,
             error_code,
         )
+        self._observe(lambda observer: observer.failed(error_code))
 
     async def _reschedule_shutdown(
         self,
@@ -199,6 +225,7 @@ class PluginReputationPublisherWorker:
                 timedelta(0),
                 "worker_shutdown",
             )
+            self._observe(lambda observer: observer.shutdown_rescheduled())
 
     def _retry_delay(self, attempt_count: int) -> timedelta:
         multiplier = 2 ** min(max(attempt_count - 1, 0), 30)
@@ -207,3 +234,12 @@ class PluginReputationPublisherWorker:
             self._config.retry_maximum.total_seconds(),
         )
         return timedelta(seconds=seconds)
+
+    def _observe(
+        self,
+        callback: Callable[[PluginReputationWorkerObserver], None],
+    ) -> None:
+        if self._observer is None:
+            return
+        with suppress(Exception):
+            callback(self._observer)

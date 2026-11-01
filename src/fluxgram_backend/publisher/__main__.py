@@ -29,6 +29,8 @@ def main() -> int:
                 if item["loc"]
             }
         )
+        if not fields:
+            fields = ["DATABASE_URL", "DATABASE_URL_FILE"]
         print(
             "Publisher configuration is invalid. Check environment fields: "
             + ", ".join(fields),
@@ -36,10 +38,19 @@ def main() -> int:
         )
         return 2
 
+    try:
+        database_url = process.resolve_database_url()
+    except RuntimeError:
+        print(
+            "Publisher configuration is invalid. Check environment fields: DATABASE_URL_FILE",
+            file=sys.stderr,
+        )
+        return 2
+
     configure_logging(process.log_level)
     asyncio.run(
         run_plugin_reputation_publisher(
-            process.database_url.get_secret_value(),
+            database_url,
             publisher,
             worker,
         )

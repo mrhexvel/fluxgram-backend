@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from fluxgram_backend.publisher.settings import (
+    PluginReputationProcessSettings,
     PluginReputationPublisherSettings,
     PluginReputationWorkerSettings,
 )
@@ -108,6 +109,62 @@ def test_worker_settings_validate_bounded_intervals() -> None:
                 "plugin_reputation_worker_renewal_seconds": 10,
             }
         )
+
+
+def test_process_settings_read_database_url_from_private_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL_FILE", raising=False)
+    database_file = tmp_path / "database-url"
+    database_file.write_text("postgresql+asyncpg://user:secret@db/fluxgram\n", encoding="utf-8")
+    database_file.chmod(0o400)
+    settings = PluginReputationProcessSettings.model_validate(
+        {"database_url_file": database_file}
+    )
+
+    assert settings.resolve_database_url() == "postgresql+asyncpg://user:secret@db/fluxgram"
+    assert "secret" not in repr(settings)
+
+
+def test_process_settings_require_exactly_one_database_url_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL_FILE", raising=False)
+    with pytest.raises(ValidationError, match="exactly one"):
+        PluginReputationProcessSettings.model_validate({})
+    with pytest.raises(ValidationError, match="exactly one"):
+        PluginReputationProcessSettings.model_validate(
+            {
+                "database_url": "postgresql+asyncpg://user:secret@db/fluxgram",
+                "database_url_file": tmp_path / "database-url",
+            }
+        )
+
+
+@pytest.mark.parametrize("mode", (0o440, 0o600, 0o644))
+def test_process_settings_reject_unsafe_database_url_file_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mode: int,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("DATABASE_URL_FILE", raising=False)
+    database_file = tmp_path / "database-url"
+    database_file.write_text("postgresql+asyncpg://user:secret@db/fluxgram", encoding="utf-8")
+    database_file.chmod(mode)
+    settings = PluginReputationProcessSettings.model_validate(
+        {"database_url_file": database_file}
+    )
+
+    with pytest.raises(RuntimeError, match="database URL file is invalid"):
+        settings.resolve_database_url()
     with pytest.raises(ValidationError, match="initial retry"):
         PluginReputationWorkerSettings.model_validate(
             {

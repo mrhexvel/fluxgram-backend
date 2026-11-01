@@ -1,14 +1,19 @@
+import os
 import re
 import unicodedata
+from ipaddress import IPv4Network
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from fluxgram_backend.adapters.secure_file import SecureFileError, read_bounded_regular_file
 from fluxgram_backend.adapters.vault_transit import NAME_PATTERN, NAMESPACE_PATTERN
 
 AUTHORITY_KEY_ID_PATTERN = re.compile(r"^p256:[0-9a-f]{64}$")
+DATABASE_URL_FILE_MODES = frozenset((0o400,))
+MAX_DATABASE_URL_BYTES = 4096
 
 
 class PluginReputationPublisherSettings(BaseSettings):
@@ -107,6 +112,19 @@ class PluginReputationWorkerSettings(BaseSettings):
     plugin_reputation_worker_retry_max_seconds: float = Field(default=60, gt=0, le=86400)
     plugin_reputation_worker_max_attempts: int = Field(default=10, ge=1, le=100)
     plugin_reputation_worker_shutdown_grace_seconds: float = Field(default=30, gt=0, le=300)
+    plugin_reputation_operations_host: str = "127.0.0.1"
+    plugin_reputation_operations_port: int = Field(default=8090, ge=1024, le=65535)
+    plugin_reputation_operations_allowed_network: IPv4Network = IPv4Network("127.0.0.0/8")
+    plugin_reputation_operations_max_connections: int = Field(default=32, ge=1, le=128)
+    plugin_reputation_readiness_stale_seconds: float = Field(default=30, gt=0, le=300)
+    plugin_reputation_signer_probe_seconds: float = Field(default=30, gt=0, le=300)
+
+    @field_validator("plugin_reputation_operations_host")
+    @classmethod
+    def validate_operations_host(cls, value: str) -> str:
+        if value not in ("0.0.0.0", "127.0.0.1"):
+            raise ValueError("operations host must be an explicit IPv4 bind address")
+        return value
 
     @model_validator(mode="after")
     def validate_intervals(self) -> "PluginReputationWorkerSettings":
@@ -121,6 +139,11 @@ class PluginReputationWorkerSettings(BaseSettings):
             > self.plugin_reputation_worker_retry_max_seconds
         ):
             raise ValueError("worker initial retry must not exceed maximum retry")
+        if self.plugin_reputation_readiness_stale_seconds <= max(
+            self.plugin_reputation_worker_poll_seconds * 2,
+            self.plugin_reputation_worker_renewal_seconds * 2,
+        ):
+            raise ValueError("readiness stale interval is too short")
 
         return self
 
@@ -133,12 +156,59 @@ class PluginReputationProcessSettings(BaseSettings):
         extra="ignore",
     )
 
-    database_url: SecretStr
+    database_url: SecretStr | None = None
+    database_url_file: Path | None = None
     log_level: str = "INFO"
 
     @field_validator("database_url")
     @classmethod
-    def validate_database_url(cls, value: SecretStr) -> SecretStr:
+    def validate_database_url(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None:
+            return None
         if not value.get_secret_value().startswith("postgresql+asyncpg://"):
             raise ValueError("database_url must use postgresql+asyncpg")
+        return value
+
+    @field_validator("database_url_file")
+    @classmethod
+    def validate_database_url_file(cls, value: Path | None) -> Path | None:
+        if value is not None and not value.is_absolute():
+            raise ValueError("database_url_file must be absolute")
+        return value
+
+    @model_validator(mode="after")
+    def validate_database_source(self) -> "PluginReputationProcessSettings":
+        if (self.database_url is None) == (self.database_url_file is None):
+            raise ValueError("exactly one database URL source is required")
+        return self
+
+    def resolve_database_url(self) -> str:
+        if self.database_url is not None:
+            return self.database_url.get_secret_value()
+        if self.database_url_file is None:
+            raise RuntimeError("database URL source is unavailable")
+
+        try:
+            encoded = read_bounded_regular_file(
+                self.database_url_file,
+                MAX_DATABASE_URL_BYTES,
+                DATABASE_URL_FILE_MODES,
+                frozenset((os.geteuid(),)),
+            )
+        except SecureFileError as error:
+            raise RuntimeError("database URL file is invalid") from error
+
+        if encoded.endswith(b"\n"):
+            encoded = encoded[:-1]
+        try:
+            value = encoded.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise RuntimeError("database URL file is invalid") from error
+        if (
+            not value.startswith("postgresql+asyncpg://")
+            or not value
+            or value != value.strip()
+            or any(unicodedata.category(character) == "Cc" for character in value)
+        ):
+            raise RuntimeError("database URL file is invalid")
         return value

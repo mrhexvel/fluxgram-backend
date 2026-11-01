@@ -191,6 +191,16 @@ services:
       vault-agent:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -m
+        - fluxgram_backend.publisher.healthcheck
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
 
   verify:
     profiles: ["verify"]

@@ -35,6 +35,9 @@ from fluxgram_backend.reputation.verification import (
 )
 
 OPERATION_TYPE = "publish_plugin_reputation"
+SIGNER_CHECK_QUERY = ReputationQuery(
+    hashlib.sha256(b"fluxgram.plugin.reputation.publisher.signer-check.v1").hexdigest()
+)
 
 
 class ReputationPublicationError(Exception):
@@ -108,6 +111,18 @@ class PluginReputationPublisher:
         self._signer = signer
         self._authority_key_id = authority_key_id
         self._signer_timeout_seconds = signer_timeout_seconds
+
+    async def check_signer(self) -> None:
+        response = ReputationResponse(
+            SIGNER_CHECK_QUERY.archive_sha256,
+            None,
+            0,
+            0,
+            1,
+            ArchiveStatus.CLEAR,
+            KeyStatus.NOT_APPLICABLE,
+        )
+        await self._sign(response, SIGNER_CHECK_QUERY)
 
     async def publish(
         self,

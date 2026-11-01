@@ -130,6 +130,44 @@ def test_vault_agent_compose_hardens_container_and_mounts() -> None:
     assert "vault token lookup" in service["healthcheck"]["test"][1]
 
 
+def test_production_publisher_uses_digest_image_private_database_file_and_bounded_health() -> None:
+    compose = yaml.safe_load(
+        (DEPLOY_ROOT / "compose.vault-agent.yml").read_text(encoding="ascii")
+    )
+    service = compose["services"]["publisher-worker"]
+
+    assert service["image"].startswith("${PLUGIN_REPUTATION_PUBLISHER_IMAGE:?")
+    assert service["command"] == ["python", "-m", "fluxgram_backend.publisher"]
+    assert service["user"] == "65534:65534"
+    assert service["init"] is True
+    assert service["read_only"] is True
+    assert service["cap_drop"] == ["ALL"]
+    assert service["security_opt"] == ["no-new-privileges:true"]
+    assert service["restart"] == "unless-stopped"
+    assert service["stop_grace_period"] == "40s"
+    assert "ports" not in service
+    assert service["expose"] == ["8090"]
+    assert service["environment"]["DATABASE_URL_FILE"] == "/run/secrets/database-url"
+    assert "DATABASE_URL" not in service["environment"]
+    assert "VAULT_TOKEN" not in service["environment"]
+    assert service["environment"]["PLUGIN_REPUTATION_OPERATIONS_HOST"] == "0.0.0.0"
+    assert service["depends_on"]["vault-agent"]["condition"] == "service_healthy"
+    assert service["networks"] == ["database", "monitoring", "vault"]
+    assert "PLUGIN_REPUTATION_OPERATIONS_ALLOWED_NETWORK" in service["environment"]
+    assert service["healthcheck"]["test"][-1] == "/health/ready"
+    assert service["logging"]["options"] == {"max-size": "10m", "max-file": "3"}
+
+    mounts = service["volumes"]
+    assert {mount["target"] for mount in mounts} == {
+        "/run/secrets/database-url",
+        "/vault/secrets",
+        "/vault/tls/vault-ca.pem",
+    }
+    assert all(mount["read_only"] is True for mount in mounts)
+    assert all(mount["bind"]["create_host_path"] is False for mount in mounts)
+    assert not any("bootstrap" in mount["target"] for mount in mounts)
+
+
 def test_local_compose_separates_worker_from_vault_admin_credentials() -> None:
     compose = yaml.safe_load(
         (DEPLOY_ROOT / "compose.local.yml").read_text(encoding="ascii")
