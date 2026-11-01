@@ -128,3 +128,86 @@ def test_vault_agent_compose_hardens_container_and_mounts() -> None:
     assert all(mount["read_only"] is True for mount in tmpfs_mounts)
     assert all(mount["tmpfs"]["mode"] == 0o555 for mount in tmpfs_mounts)
     assert "vault token lookup" in service["healthcheck"]["test"][1]
+
+
+def test_local_compose_separates_worker_from_vault_admin_credentials() -> None:
+    compose = yaml.safe_load(
+        (DEPLOY_ROOT / "compose.local.yml").read_text(encoding="ascii")
+    )
+    services = compose["services"]
+
+    assert set(services) == {
+        "migrate",
+        "postgres",
+        "vault",
+        "vault-agent",
+        "vault-bootstrap",
+        "vault-tls-init",
+        "verify",
+        "worker",
+    }
+    assert services["postgres"]["ports"] == [
+        "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+    ]
+    assert services["vault"]["ports"] == [
+        "127.0.0.1:${VAULT_PORT:-18200}:8200"
+    ]
+    assert services["vault"]["entrypoint"] == ["/bin/vault"]
+    assert services["vault"]["user"] == "100:1000"
+    assert services["vault"]["read_only"] is True
+    assert services["vault"]["cap_drop"] == ["ALL"]
+    for service_name in (
+        "postgres",
+        "vault",
+        "vault-agent",
+        "vault-bootstrap",
+        "worker",
+    ):
+        assert services[service_name]["restart"] == "unless-stopped"
+    assert services["vault-agent"]["depends_on"]["vault-bootstrap"]["condition"] == (
+        "service_healthy"
+    )
+    assert "wrapped-secret-id" in services["vault-bootstrap"]["healthcheck"]["test"][1]
+
+    worker = services["worker"]
+    assert worker["user"] == "65534:65534"
+    assert worker["read_only"] is True
+    assert worker["cap_drop"] == ["ALL"]
+    assert worker["security_opt"] == ["no-new-privileges:true"]
+    assert worker["environment"]["VAULT_AGENT_TOKEN_FILE"] == "/vault/secrets/token"
+    assert worker["environment"]["VAULT_CA_FILE"] == "/vault/config/vault-ca.pem"
+    assert "VAULT_TOKEN" not in worker["environment"]
+    assert "authority-key-id" in worker["command"][0]
+    worker_mounts = set(worker["volumes"])
+    assert worker_mounts == {
+        "local-vault-config:/vault/config:ro",
+        "local-vault-secrets:/vault/secrets:ro",
+    }
+    assert not any("bootstrap" in mount for mount in worker_mounts)
+    assert not any("admin" in mount for mount in worker_mounts)
+    assert not any("vault-tls" in mount for mount in worker_mounts)
+
+    verifier = services["verify"]
+    assert verifier["profiles"] == ["verify"]
+    assert "depends_on" not in verifier
+    assert verifier["volumes"][1] == "local-vault-config:/vault/config:ro"
+
+
+def test_local_bootstrap_uses_tls_wrapped_approle_and_non_exportable_key() -> None:
+    bootstrap = (DEPLOY_ROOT / "local" / "bootstrap.py").read_text(encoding="ascii")
+    vault_config = (DEPLOY_ROOT / "local" / "vault.hcl").read_text(encoding="ascii")
+
+    assert 'VAULT_ADDRESS = "https://vault:8200"' in bootstrap
+    assert '"type": "ecdsa-p256"' in bootstrap
+    assert '"exportable": False' in bootstrap
+    assert '"allow_plaintext_backup": False' in bootstrap
+    assert 'wrap_ttl="5m"' in bootstrap
+    assert 'CONFIG_DIRECTORY / "vault-ca.pem"' in bootstrap
+    assert 'CONFIG_DIRECTORY / "authority-key-id"' in bootstrap
+    assert '(SECRETS_DIRECTORY, 65534, 65534)' in bootstrap
+    assert 'BOOTSTRAP_DIRECTORY / "wrapped-secret-id"' in bootstrap
+    assert "supervise_vault(root_token)" in bootstrap
+    assert 'storage "file"' in vault_config
+    assert 'tls_cert_file   = "/vault/tls/vault-cert.pem"' in vault_config
+    assert 'tls_key_file    = "/vault/tls/vault-key.pem"' in vault_config
+    assert "tls_disable" not in vault_config

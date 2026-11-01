@@ -1,9 +1,61 @@
 # Plugin Reputation Publisher
 
 The publisher runs separately from the public API and receives its Vault token from Vault Agent.
-The tracked Agent-only Compose fragment assumes a Vault service named `vault`, Transit mounted at
-`transit`, the key `plugin-reputation`, and publisher UID/GID `65534`. It pins Vault Agent 1.21.0 by
-image digest. A publisher service is intentionally absent until a separate publisher command exists.
+The production-oriented Agent Compose fragment assumes a Vault service named `vault`, Transit
+mounted at `transit`, the key `plugin-reputation`, and publisher UID/GID `65534`. It pins Vault Agent
+1.21.0 by image digest.
+
+## Local Docker Deployment
+
+`compose.local.yml` starts a complete development stack on Docker Desktop without a host Vault CLI:
+
+- PostgreSQL 18 and database migrations;
+- a TLS-enabled Vault 1.21 server with persistent file storage;
+- initialization, restart-safe unseal, Transit key, policy and AppRole provisioning;
+- Vault Agent auto-auth with a response-wrapped, single-use SecretID;
+- the publisher worker with only the CA, read-only token sink and public authority key ID.
+
+From the repository root, start it with:
+
+```sh
+docker compose -f deploy/plugin-reputation/compose.local.yml up --build
+```
+
+The first start creates local-only CA, Vault root token and unseal key inside private Docker volumes.
+They are not written to the checkout or exposed to the worker. A local supervisor unseals Vault after
+a container restart and keeps a short-lived wrapped SecretID ready for Vault Agent recovery. Vault
+and PostgreSQL bind only to
+`127.0.0.1` on ports `18200` and `55432`; `VAULT_PORT` and `POSTGRES_PORT` can override them. Host
+Vault clients must explicitly trust the generated CA from the Docker volume. The normal verification
+is the Compose service state and worker log; no host Vault access is required.
+
+Stop the stack while preserving PostgreSQL, Vault and its local authority key:
+
+```sh
+docker compose -f deploy/plugin-reputation/compose.local.yml down
+```
+
+Reset all local credentials, records and keys:
+
+```sh
+docker compose -f deploy/plugin-reputation/compose.local.yml down -v
+```
+
+The local supervisor is intentionally not a production unseal or credential-delivery mechanism. It
+keeps access to one unseal key and a root token in a local Docker volume so component restarts are
+automatic. Production must use the external issuer, protected runtime directories and Agent-only
+fragment described below.
+
+After the worker is running, execute a real queue-to-Vault verification:
+
+```sh
+docker compose -f deploy/plugin-reputation/compose.local.yml \
+  --profile verify run --rm --no-deps verify
+```
+
+The command creates one local clear decision, waits for the running worker, reads the persisted
+record and verifies its canonical P-256 signature against the generated authority key ID. The
+expected final line is `Local Vault publisher verification passed`.
 
 ## Publisher Process
 

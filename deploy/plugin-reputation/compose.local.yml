@@ -1,0 +1,218 @@
+services:
+  postgres:
+    image: postgres:18-bookworm
+    environment:
+      POSTGRES_DB: fluxgram
+      POSTGRES_PASSWORD: fluxgram
+      POSTGRES_USER: fluxgram
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fluxgram -d fluxgram"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - local-postgres-data:/var/lib/postgresql
+    restart: unless-stopped
+
+  vault-tls-init:
+    build: ../..
+    command: ["python", "/deployment/bootstrap.py", "prepare-tls"]
+    user: "0:0"
+    read_only: true
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER"]
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - type: bind
+        source: ./local/bootstrap.py
+        target: /deployment/bootstrap.py
+        read_only: true
+      - local-vault-data:/vault/data
+      - local-vault-tls:/vault/tls
+
+  vault:
+    image: hashicorp/vault:1.21.0@sha256:62dd55c9ccbdc0af0a9269e87481a64650258907434d5ddb5e795e2eb2ac5780
+    entrypoint: ["/bin/vault"]
+    command: ["server", "-config=/vault/config/local.hcl"]
+    user: "100:1000"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "127.0.0.1:${VAULT_PORT:-18200}:8200"
+    volumes:
+      - type: bind
+        source: ./local/vault.hcl
+        target: /vault/config/local.hcl
+        read_only: true
+      - local-vault-data:/vault/data
+      - local-vault-tls:/vault/tls:ro
+    depends_on:
+      vault-tls-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - VAULT_ADDR=https://127.0.0.1:8200 VAULT_CACERT=/vault/tls/vault-ca.pem /bin/vault status >/dev/null
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  vault-bootstrap:
+    build: ../..
+    command: ["python", "/deployment/bootstrap.py", "supervise"]
+    user: "0:0"
+    read_only: true
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "FOWNER"]
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - type: bind
+        source: ./local/bootstrap.py
+        target: /deployment/bootstrap.py
+        read_only: true
+      - type: bind
+        source: ./vault/publisher-policy.hcl
+        target: /deployment/publisher-policy.hcl
+        read_only: true
+      - type: bind
+        source: ./vault/publisher-role.json
+        target: /deployment/publisher-role.json
+        read_only: true
+      - local-vault-admin:/vault/admin
+      - local-vault-bootstrap:/vault/bootstrap
+      - local-vault-config:/vault/config-output
+      - local-vault-secrets:/vault/secrets
+      - local-vault-tls:/vault/tls:ro
+    depends_on:
+      vault:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - test -r /vault/config-output/authority-key-id && test -r /vault/config-output/vault-ca.pem && test -r /vault/bootstrap/role-id && test -r /vault/bootstrap/wrapped-secret-id
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  vault-agent:
+    image: hashicorp/vault:1.21.0@sha256:62dd55c9ccbdc0af0a9269e87481a64650258907434d5ddb5e795e2eb2ac5780
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        test "$(stat -c '%u:%g:%a' /vault/bootstrap)" = "65534:65534:700"
+        test "$(stat -c '%u:%g:%a' /vault/secrets)" = "65534:65534:700"
+        exec /bin/vault agent -config=/vault/config/agent.hcl
+    user: "65534:65534"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    stop_grace_period: 10s
+    volumes:
+      - type: bind
+        source: ./vault/agent.hcl
+        target: /vault/config/agent.hcl
+        read_only: true
+      - local-vault-bootstrap:/vault/bootstrap
+      - local-vault-secrets:/vault/secrets
+      - local-vault-tls:/vault/tls:ro
+      - type: tmpfs
+        target: /vault/file
+        read_only: true
+        tmpfs:
+          size: 1048576
+          mode: 365
+      - type: tmpfs
+        target: /vault/logs
+        read_only: true
+        tmpfs:
+          size: 1048576
+          mode: 365
+    depends_on:
+      vault-bootstrap:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - VAULT_ADDR=https://vault:8200 VAULT_CACERT=/vault/tls/vault-ca.pem VAULT_TOKEN="$$(cat /vault/secrets/token)" /bin/vault token lookup -format=json >/dev/null
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  migrate:
+    build: ../..
+    command: ["python", "-m", "fluxgram_backend", "migrate"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://fluxgram:fluxgram@postgres:5432/fluxgram
+      ENVIRONMENT: development
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build: ../..
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export PLUGIN_REPUTATION_AUTHORITY_KEY_ID="$$(cat /vault/config/authority-key-id)"
+        exec python -m fluxgram_backend.publisher
+    environment:
+      DATABASE_URL: postgresql+asyncpg://fluxgram:fluxgram@postgres:5432/fluxgram
+      PLUGIN_REPUTATION_WORKER_ID: local-publisher-1
+      VAULT_ADDRESS: https://vault:8200
+      VAULT_AGENT_TOKEN_FILE: /vault/secrets/token
+      VAULT_CA_FILE: /vault/config/vault-ca.pem
+      VAULT_TRANSIT_KEY_NAME: plugin-reputation
+      VAULT_TRANSIT_KEY_VERSION: "1"
+      VAULT_TRANSIT_MOUNT: transit
+    user: "65534:65534"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 35s
+    tmpfs:
+      - /tmp:size=1048576,mode=1700,uid=65534,gid=65534
+    volumes:
+      - local-vault-config:/vault/config:ro
+      - local-vault-secrets:/vault/secrets:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      vault-agent:
+        condition: service_healthy
+    restart: unless-stopped
+
+  verify:
+    profiles: ["verify"]
+    build: ../..
+    command: ["python", "/deployment/verify.py"]
+    user: "65534:65534"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - type: bind
+        source: ./local/verify.py
+        target: /deployment/verify.py
+        read_only: true
+      - local-vault-config:/vault/config:ro
+
+volumes:
+  local-postgres-data:
+  local-vault-admin:
+  local-vault-bootstrap:
+  local-vault-config:
+  local-vault-data:
+  local-vault-secrets:
+  local-vault-tls:
