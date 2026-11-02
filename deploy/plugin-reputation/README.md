@@ -11,6 +11,7 @@ for the backend image.
 `compose.local.yml` starts a complete development stack on Docker Desktop without a host Vault CLI:
 
 - PostgreSQL 18 and database migrations;
+- the regular public API and Telegram webhook bot when the `application` profile is enabled;
 - a TLS-enabled Vault 1.21 server with persistent file storage;
 - initialization, restart-safe unseal, Transit key, policy and AppRole provisioning;
 - Vault Agent auto-auth with a response-wrapped, single-use SecretID;
@@ -19,7 +20,23 @@ for the backend image.
 From the repository root, start it with:
 
 ```sh
-docker compose -f deploy/plugin-reputation/compose.local.yml up --build
+docker compose --env-file .env -f deploy/plugin-reputation/compose.local.yml \
+  --profile application up --build -d
+```
+
+The regular API, Telegram bot, publisher worker and reputation API in this composition use the same
+PostgreSQL service and the same migration run. Do not run the root `docker-compose.yml` PostgreSQL or
+a host bot alongside this complete stack. Configure the Telegram variables in the repository-local
+`.env` before enabling the profile. Compose passes only the explicit Telegram variables to the bot,
+while its database address remains fixed to the Compose PostgreSQL service. The regular API binds to `127.0.0.1:8080`, the bot to
+`127.0.0.1:8081`, and the reputation API to `127.0.0.1:18080` by default. Point the Telegram webhook
+tunnel to port `8081` and the client reputation endpoint tunnel to port `18080`.
+
+Register the Telegram webhook after its tunnel is available:
+
+```sh
+docker compose --env-file .env -f deploy/plugin-reputation/compose.local.yml \
+  --profile application exec bot python -m fluxgram_backend webhook set
 ```
 
 The first start creates local-only CA, Vault root token and unseal key inside private Docker volumes.

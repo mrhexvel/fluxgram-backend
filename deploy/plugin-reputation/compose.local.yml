@@ -14,6 +14,10 @@ services:
       - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
     volumes:
       - local-postgres-data:/var/lib/postgresql
+    networks:
+      database:
+        aliases:
+          - postgres
     restart: unless-stopped
 
   vault-tls-init:
@@ -51,6 +55,10 @@ services:
         read_only: true
       - local-vault-data:/vault/data
       - local-vault-tls:/vault/tls:ro
+    networks:
+      vault:
+        aliases:
+          - vault
     depends_on:
       vault-tls-init:
         condition: service_completed_successfully
@@ -90,6 +98,8 @@ services:
       - local-vault-config:/vault/config-output
       - local-vault-secrets:/vault/secrets
       - local-vault-tls:/vault/tls:ro
+    networks:
+      - vault
     depends_on:
       vault:
         condition: service_started
@@ -137,6 +147,8 @@ services:
         tmpfs:
           size: 1048576
           mode: 365
+    networks:
+      - vault
     depends_on:
       vault-bootstrap:
         condition: service_healthy
@@ -154,9 +166,51 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://fluxgram:fluxgram@postgres:5432/fluxgram
       ENVIRONMENT: development
+    networks:
+      - database
     depends_on:
       postgres:
         condition: service_healthy
+
+  api:
+    profiles: ["application"]
+    build: ../..
+    command: ["python", "-m", "fluxgram_backend", "api"]
+    environment:
+      API_HOST: 0.0.0.0
+      DATABASE_URL: postgresql+asyncpg://fluxgram:fluxgram@postgres:5432/fluxgram
+      ENVIRONMENT: development
+    networks:
+      - database
+      - public
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  bot:
+    profiles: ["application"]
+    build: ../..
+    command: ["python", "-m", "fluxgram_backend", "bot"]
+    environment:
+      BOT_HOST: 0.0.0.0
+      DATABASE_URL: postgresql+asyncpg://fluxgram:fluxgram@postgres:5432/fluxgram
+      ENVIRONMENT: development
+      TELEGRAM_ADMIN_IDS: ${TELEGRAM_ADMIN_IDS:?set TELEGRAM_ADMIN_IDS}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN}
+      TELEGRAM_WEBHOOK_BASE_URL: ${TELEGRAM_WEBHOOK_BASE_URL:?set TELEGRAM_WEBHOOK_BASE_URL}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:?set TELEGRAM_WEBHOOK_SECRET}
+    networks:
+      - database
+      - public
+    ports:
+      - "127.0.0.1:${BOT_PORT:-8081}:8081"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
 
   api-role-init:
     image: postgres:18-bookworm
@@ -182,6 +236,8 @@ services:
         SQL
     environment:
       PGPASSWORD: fluxgram
+    networks:
+      - database
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -208,6 +264,11 @@ services:
       - /tmp:size=1048576,mode=1700,uid=65534,gid=65534
     volumes:
       - local-vault-config:/vault/config:ro
+    networks:
+      database:
+      public:
+        aliases:
+          - public-api
     depends_on:
       api-role-init:
         condition: service_completed_successfully
@@ -254,6 +315,9 @@ services:
     volumes:
       - local-vault-config:/vault/config:ro
       - local-vault-secrets:/vault/secrets:ro
+    networks:
+      - database
+      - vault
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -286,6 +350,9 @@ services:
         target: /deployment/verify.py
         read_only: true
       - local-vault-config:/vault/config:ro
+    networks:
+      - database
+      - public
 
 volumes:
   local-postgres-data:
@@ -295,3 +362,8 @@ volumes:
   local-vault-data:
   local-vault-secrets:
   local-vault-tls:
+
+networks:
+  database:
+  public:
+  vault:

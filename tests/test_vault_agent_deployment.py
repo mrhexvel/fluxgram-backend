@@ -212,7 +212,9 @@ def test_local_compose_separates_worker_from_vault_admin_credentials() -> None:
     services = compose["services"]
 
     assert set(services) == {
+        "api",
         "api-role-init",
+        "bot",
         "migrate",
         "postgres",
         "public-api",
@@ -226,14 +228,18 @@ def test_local_compose_separates_worker_from_vault_admin_credentials() -> None:
     assert services["postgres"]["ports"] == [
         "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
     ]
+    assert services["postgres"]["networks"]["database"]["aliases"] == ["postgres"]
     assert services["vault"]["ports"] == [
         "127.0.0.1:${VAULT_PORT:-18200}:8200"
     ]
+    assert services["vault"]["networks"]["vault"]["aliases"] == ["vault"]
     assert services["vault"]["entrypoint"] == ["/bin/vault"]
     assert services["vault"]["user"] == "100:1000"
     assert services["vault"]["read_only"] is True
     assert services["vault"]["cap_drop"] == ["ALL"]
     for service_name in (
+        "api",
+        "bot",
         "postgres",
         "public-api",
         "vault",
@@ -242,6 +248,47 @@ def test_local_compose_separates_worker_from_vault_admin_credentials() -> None:
         "worker",
     ):
         assert services[service_name]["restart"] == "unless-stopped"
+
+    application_database_url = (
+        "postgresql+asyncpg://fluxgram:fluxgram@postgres:5432/fluxgram"
+    )
+    assert services["api"]["profiles"] == ["application"]
+    assert services["api"]["ports"] == ["127.0.0.1:${API_PORT:-8080}:8080"]
+    assert services["api"]["environment"]["DATABASE_URL"] == application_database_url
+    assert set(services["api"]["networks"]) == {"database", "public"}
+    assert services["api"]["depends_on"]["migrate"]["condition"] == (
+        "service_completed_successfully"
+    )
+    assert services["bot"]["profiles"] == ["application"]
+    assert "env_file" not in services["bot"]
+    assert services["bot"]["ports"] == ["127.0.0.1:${BOT_PORT:-8081}:8081"]
+    assert services["bot"]["environment"]["DATABASE_URL"] == application_database_url
+    assert set(services["bot"]["environment"]) == {
+        "BOT_HOST",
+        "DATABASE_URL",
+        "ENVIRONMENT",
+        "TELEGRAM_ADMIN_IDS",
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_WEBHOOK_BASE_URL",
+        "TELEGRAM_WEBHOOK_SECRET",
+    }
+    for variable in (
+        "TELEGRAM_ADMIN_IDS",
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_WEBHOOK_BASE_URL",
+        "TELEGRAM_WEBHOOK_SECRET",
+    ):
+        assert f"${{{variable}:?set {variable}}}" == services["bot"]["environment"][variable]
+    assert set(services["bot"]["networks"]) == {"database", "public"}
+    assert services["bot"]["depends_on"]["migrate"]["condition"] == (
+        "service_completed_successfully"
+    )
+    assert services["worker"]["environment"]["DATABASE_URL"] == application_database_url
+    assert set(services["worker"]["networks"]) == {"database", "vault"}
+    assert set(services["public-api"]["networks"]) == {"database", "public"}
+    assert services["public-api"]["networks"]["public"]["aliases"] == ["public-api"]
+    assert "vault" not in services["bot"]["networks"]
+    assert "public" not in services["vault"]["networks"]
     assert services["vault-agent"]["depends_on"]["vault-bootstrap"]["condition"] == (
         "service_healthy"
     )

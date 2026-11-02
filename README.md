@@ -53,17 +53,19 @@ docker compose --profile tools run --rm migrate
 docker compose --profile api up api
 ```
 
-The complete local plugin reputation stack includes PostgreSQL, Vault, Vault Agent, publisher and
-the read-only public API. Bootstrap configures Vault and passes only the public authority key ID to
-the API automatically:
+The complete local plugin reputation stack includes one PostgreSQL for the regular API, Telegram
+bot, publisher and read-only reputation API, together with Vault and Vault Agent. Bootstrap
+configures Vault and passes only the public authority key ID to the reputation API automatically:
 
 ```sh
-docker compose -f deploy/plugin-reputation/compose.local.yml up --build -d
+docker compose --env-file .env -f deploy/plugin-reputation/compose.local.yml \
+  --profile application up --build -d
 curl --fail http://127.0.0.1:18080/health/ready
 ```
 
 No host Vault installation, role creation or manual unseal/token command is required for this local
-stack. The regular `api` command serves profile routes; `reputation-api` serves only the binary
-reputation route and health probes.
+stack. Do not start the root Compose PostgreSQL or host bot in parallel with it. The regular API
+serves profile routes on port `8080`, the Telegram webhook bot listens on `8081`, and the dedicated
+binary reputation API listens on `18080`.
 
 The OpenAPI source of truth is `openapi/appearance-v1.yaml`. Example payloads are stored under `fixtures/appearance/v1`.
