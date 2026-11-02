@@ -158,6 +158,75 @@ services:
       postgres:
         condition: service_healthy
 
+  api-role-init:
+    image: postgres:18-bookworm
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        psql -v ON_ERROR_STOP=1 --host=postgres --username=fluxgram --dbname=fluxgram <<'SQL'
+        DO $$$$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'fluxgram_reputation_api') THEN
+                CREATE ROLE fluxgram_reputation_api LOGIN PASSWORD 'local-read-only';
+            END IF;
+        END
+        $$$$;
+        ALTER ROLE fluxgram_reputation_api LOGIN PASSWORD 'local-read-only'
+            NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
+        REVOKE TEMPORARY ON DATABASE fluxgram FROM PUBLIC;
+        GRANT CONNECT ON DATABASE fluxgram TO fluxgram_reputation_api;
+        GRANT USAGE ON SCHEMA public TO fluxgram_reputation_api;
+        REVOKE CREATE ON SCHEMA public FROM fluxgram_reputation_api;
+        REVOKE ALL ON ALL TABLES IN SCHEMA public FROM fluxgram_reputation_api;
+        GRANT SELECT ON TABLE plugin_reputation_records TO fluxgram_reputation_api;
+        SQL
+    environment:
+      PGPASSWORD: fluxgram
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  public-api:
+    build: ../..
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export REPUTATION_API_AUTHORITY_KEY_ID="$$(cat /vault/config/authority-key-id)"
+        exec python -m fluxgram_backend reputation-api
+    environment:
+      API_HOST: 0.0.0.0
+      DATABASE_URL: postgresql+asyncpg://fluxgram_reputation_api:local-read-only@postgres:5432/fluxgram
+      ENVIRONMENT: development
+    user: "65534:65534"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "127.0.0.1:${REPUTATION_API_PORT:-18080}:8080"
+    tmpfs:
+      - /tmp:size=1048576,mode=1700,uid=65534,gid=65534
+    volumes:
+      - local-vault-config:/vault/config:ro
+    depends_on:
+      api-role-init:
+        condition: service_completed_successfully
+      vault-bootstrap:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8080/health/ready', timeout=2).read()
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
   worker:
     build: ../..
     entrypoint: ["/bin/sh", "-ec"]

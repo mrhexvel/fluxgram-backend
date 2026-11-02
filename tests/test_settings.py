@@ -19,6 +19,51 @@ def test_settings_load_runtime_values_from_environment(monkeypatch: pytest.Monke
     assert "postgresql+asyncpg://user:secret@db/fluxgram" not in str(settings)
 
 
+def test_settings_load_database_url_from_private_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "database-url"
+    path.write_text(
+        "postgresql+asyncpg://user:secret@db/fluxgram\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o400)
+
+    settings = Settings.model_validate({"database_url_file": path})
+
+    assert settings.require_database_url() == (
+        "postgresql+asyncpg://user:secret@db/fluxgram"
+    )
+    assert "user:secret" not in str(settings)
+
+
+def test_settings_reject_database_url_file_with_broad_permissions(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / "database-url"
+    path.write_text("postgresql+asyncpg://user:secret@db/fluxgram", encoding="utf-8")
+    path.chmod(0o600)
+
+    settings = Settings.model_validate({"database_url_file": path})
+
+    with pytest.raises(RuntimeError, match="DATABASE_URL_FILE"):
+        settings.require_database_url()
+
+
+def test_settings_reject_multiple_database_sources(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="mutually exclusive"):
+        Settings.model_validate(
+            {
+                "database_url": "postgresql+asyncpg://user:secret@db/fluxgram",
+                "database_url_file": tmp_path / "database-url",
+            }
+        )
+
+
 def test_settings_require_explicit_runtime_secrets(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -64,6 +109,17 @@ def test_settings_ignore_empty_optional_environment_values(
 def test_settings_reject_unsupported_database_url(database_url: str) -> None:
     with pytest.raises(ValidationError):
         Settings.model_validate({"database_url": database_url})
+
+
+@pytest.mark.parametrize(
+    "authority_key_id",
+    ["", "p256:ABC", "p256:" + "0" * 63, "sha256:" + "0" * 64],
+)
+def test_settings_reject_invalid_reputation_authority_key_id(authority_key_id: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings.model_validate(
+            {"reputation_api_authority_key_id": authority_key_id}
+        )
 
 
 def test_settings_require_https_webhook_url() -> None:

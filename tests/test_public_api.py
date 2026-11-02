@@ -1,11 +1,14 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
+from ipaddress import IPv4Network
 
 from fastapi.testclient import TestClient
+from starlette.requests import Request
+from starlette.types import Receive, Scope, Send
 
 from fluxgram_backend.api.app import create_api_app
 from fluxgram_backend.api.context import request_id_context
-from fluxgram_backend.api.rate_limit import InMemoryRateLimiter
+from fluxgram_backend.api.rate_limit import InMemoryRateLimiter, RateLimitMiddleware
 from fluxgram_backend.domain.appearance import ProfileDesign
 from fluxgram_backend.domain.peer import FluxGramPeerKey
 from fluxgram_backend.domain.profile_read import (
@@ -215,3 +218,35 @@ def test_rate_limiter_resets_windows_and_bounds_client_state() -> None:
 
     now = 11.0
     assert limiter.check("a") is None
+
+
+def test_rate_limiter_uses_forwarded_ipv4_only_from_trusted_proxy() -> None:
+    async def app(scope: Scope, receive: Receive, send: Send) -> None:
+        pass
+
+    middleware = RateLimitMiddleware(
+        app,
+        InMemoryRateLimiter(1, 30, 10),
+        IPv4Network("10.0.0.0/24"),
+    )
+    trusted_request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/v1/test",
+            "headers": [(b"x-forwarded-for", b"203.0.113.7")],
+            "client": ("10.0.0.2", 1234),
+        }
+    )
+    untrusted_request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/v1/test",
+            "headers": [(b"x-forwarded-for", b"203.0.113.8")],
+            "client": ("192.0.2.2", 1234),
+        }
+    )
+
+    assert middleware._client_identity(trusted_request) == "203.0.113.7"
+    assert middleware._client_identity(untrusted_request) == "192.0.2.2"

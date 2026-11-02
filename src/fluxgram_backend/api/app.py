@@ -45,6 +45,9 @@ def create_api_app(
         app.state.database = resolved_database
         app.state.profile_reader = resolved_reader
         app.state.plugin_reputation_service = plugin_reputation_service
+        app.state.reputation_api_body_timeout_seconds = (
+            resolved_settings.reputation_api_body_timeout_seconds
+        )
 
         try:
             yield

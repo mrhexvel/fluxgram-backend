@@ -168,6 +168,43 @@ def test_production_publisher_uses_digest_image_private_database_file_and_bounde
     assert not any("bootstrap" in mount["target"] for mount in mounts)
 
 
+def test_production_public_api_has_database_and_ingress_only() -> None:
+    compose = yaml.safe_load(
+        (DEPLOY_ROOT / "compose.vault-agent.yml").read_text(encoding="ascii")
+    )
+    service = compose["services"]["public-api"]
+
+    assert service["image"].startswith("${PLUGIN_REPUTATION_API_IMAGE:?")
+    assert service["command"] == [
+        "python",
+        "-m",
+        "fluxgram_backend",
+        "reputation-api",
+    ]
+    assert service["user"] == "65534:65534"
+    assert service["init"] is True
+    assert service["read_only"] is True
+    assert service["cap_drop"] == ["ALL"]
+    assert service["security_opt"] == ["no-new-privileges:true"]
+    assert service["restart"] == "unless-stopped"
+    assert "ports" not in service
+    assert service["expose"] == ["8080"]
+    assert service["networks"] == ["database", "public"]
+    assert "depends_on" not in service
+    assert service["environment"]["DATABASE_URL_FILE"] == "/run/secrets/database-url"
+    assert "DATABASE_URL" not in service["environment"]
+    assert "VAULT_ADDRESS" not in service["environment"]
+    assert "VAULT_TOKEN" not in service["environment"]
+    assert "PLUGIN_REPUTATION_WORKER_ID" not in service["environment"]
+    assert "REPUTATION_API_TRUSTED_PROXY_NETWORK" in service["environment"]
+
+    mounts = service["volumes"]
+    assert len(mounts) == 1
+    assert mounts[0]["target"] == "/run/secrets/database-url"
+    assert mounts[0]["read_only"] is True
+    assert mounts[0]["bind"]["create_host_path"] is False
+
+
 def test_local_compose_separates_worker_from_vault_admin_credentials() -> None:
     compose = yaml.safe_load(
         (DEPLOY_ROOT / "compose.local.yml").read_text(encoding="ascii")
@@ -175,8 +212,10 @@ def test_local_compose_separates_worker_from_vault_admin_credentials() -> None:
     services = compose["services"]
 
     assert set(services) == {
+        "api-role-init",
         "migrate",
         "postgres",
+        "public-api",
         "vault",
         "vault-agent",
         "vault-bootstrap",
@@ -196,6 +235,7 @@ def test_local_compose_separates_worker_from_vault_admin_credentials() -> None:
     assert services["vault"]["cap_drop"] == ["ALL"]
     for service_name in (
         "postgres",
+        "public-api",
         "vault",
         "vault-agent",
         "vault-bootstrap",
@@ -224,6 +264,28 @@ def test_local_compose_separates_worker_from_vault_admin_credentials() -> None:
     assert not any("bootstrap" in mount for mount in worker_mounts)
     assert not any("admin" in mount for mount in worker_mounts)
     assert not any("vault-tls" in mount for mount in worker_mounts)
+
+    public_api = services["public-api"]
+    assert public_api["ports"] == ["127.0.0.1:${REPUTATION_API_PORT:-18080}:8080"]
+    assert public_api["user"] == "65534:65534"
+    assert public_api["read_only"] is True
+    assert public_api["cap_drop"] == ["ALL"]
+    assert public_api["security_opt"] == ["no-new-privileges:true"]
+    assert public_api["volumes"] == ["local-vault-config:/vault/config:ro"]
+    assert "VAULT_ADDRESS" not in public_api["environment"]
+    assert "VAULT_TOKEN" not in public_api["environment"]
+    assert "PLUGIN_REPUTATION_WORKER_ID" not in public_api["environment"]
+    assert "reputation-api" in public_api["command"][0]
+    assert "fluxgram_reputation_api:local-read-only" in public_api["environment"][
+        "DATABASE_URL"
+    ]
+
+    role_init = services["api-role-init"]
+    assert role_init["image"] == "postgres:18-bookworm"
+    assert "GRANT SELECT ON TABLE plugin_reputation_records" in role_init["command"][0]
+    assert "REVOKE ALL ON ALL TABLES" in role_init["command"][0]
+    assert "REVOKE TEMPORARY ON DATABASE fluxgram FROM PUBLIC" in role_init["command"][0]
+    assert "NOBYPASSRLS NOINHERIT" in role_init["command"][0]
 
     verifier = services["verify"]
     assert verifier["profiles"] == ["verify"]

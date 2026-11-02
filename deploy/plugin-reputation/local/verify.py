@@ -2,6 +2,8 @@ import asyncio
 import hashlib
 from datetime import timedelta
 from pathlib import Path
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -15,10 +17,12 @@ from fluxgram_backend.application.plugin_reputation_publisher import ReputationP
 from fluxgram_backend.database.models import PluginReputationRecord
 from fluxgram_backend.domain.operations import ActorType, OperationContext
 from fluxgram_backend.reputation.protocol import (
+    MAX_FRAME_BYTES,
     ArchiveStatus,
     KeyStatus,
     ReputationQuery,
     ReputationResponse,
+    TransportFrame,
 )
 from fluxgram_backend.reputation.verification import verify_signed_record
 
@@ -90,10 +94,49 @@ async def verify_deployment() -> None:
             or response.expires_at_millis != publication.expires_at_millis
         ):
             raise RuntimeError("published local reputation record changed the decision")
+
+        frame = await asyncio.to_thread(query_public_api, query)
+        if frame.response != record.response or frame.envelope != record.envelope:
+            raise RuntimeError("public API changed the signed reputation record")
+
+        unknown_query = ReputationQuery(hashlib.sha256(identity.encode("ascii")).hexdigest())
+        await asyncio.to_thread(require_unknown_identity, unknown_query)
     finally:
         await engine.dispose()
 
-    print("Local Vault publisher verification passed")
+    print("Local Vault publisher and public API verification passed")
+
+
+def query_public_api(query: ReputationQuery) -> TransportFrame:
+    request = Request(
+        "http://public-api:8080/v1/plugin-reputation/query",
+        data=query.encode(),
+        headers={"Content-Type": "application/octet-stream"},
+        method="POST",
+    )
+    with urlopen(request, timeout=5) as response:
+        if response.status != 200:
+            raise RuntimeError("public reputation API returned an unexpected status")
+        encoded = response.read(MAX_FRAME_BYTES + 1)
+        if len(encoded) > MAX_FRAME_BYTES:
+            raise RuntimeError("public reputation API response exceeds the transport limit")
+        return TransportFrame.decode(encoded)
+
+
+def require_unknown_identity(query: ReputationQuery) -> None:
+    request = Request(
+        "http://public-api:8080/v1/plugin-reputation/query",
+        data=query.encode(),
+        headers={"Content-Type": "application/octet-stream"},
+        method="POST",
+    )
+    try:
+        urlopen(request, timeout=5)
+    except HTTPError as error:
+        if error.code == 404 and error.read() == b"":
+            return
+        raise RuntimeError("public reputation API returned an unexpected error") from error
+    raise RuntimeError("public reputation API synthesized an unknown reputation response")
 
 
 if __name__ == "__main__":

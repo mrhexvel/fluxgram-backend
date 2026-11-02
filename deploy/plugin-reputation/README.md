@@ -56,7 +56,7 @@ docker compose -f deploy/plugin-reputation/compose.local.yml \
 
 The command creates one local clear decision, waits for the running worker, reads the persisted
 record and verifies its canonical P-256 signature against the generated authority key ID. The
-expected final line is `Local Vault publisher verification passed`.
+expected final line is `Local Vault publisher and public API verification passed`.
 
 ## Publisher Process
 
@@ -85,6 +85,25 @@ Transit authority key, not a plugin developer key. `VAULT_AGENT_TOKEN_FILE` poin
 sink and must not be replaced by a static `VAULT_TOKEN`. The process also accepts the bounded optional
 worker interval and retry settings documented by `PluginReputationWorkerSettings`.
 Production uses `DATABASE_URL_FILE`; the direct environment value remains available for local tools.
+
+The same production composition also runs a read-only `public-api` container. It receives a
+separate database credential file and the public authority key ID, connects only to the external
+database and public ingress networks, and has no Vault network, token sink, CA, AppRole bootstrap,
+publisher worker or administrative queue capability. The ingress proxy must join `PUBLIC_NETWORK`
+and route `POST /v1/plugin-reputation/query` to port `8080`. It must replace
+`X-Forwarded-For` with one canonical client IPv4 address and have its container address inside
+`REPUTATION_API_TRUSTED_PROXY_NETWORK`; headers from other peers are ignored. Unknown exact identities return `404`;
+the API never synthesizes a clear response. Invalid or unavailable stored evidence returns `503`.
+
+The API and publisher database credentials should use separate PostgreSQL roles. The API role needs
+only `CONNECT`, schema `USAGE` and `SELECT` on `plugin_reputation_records`; it must not receive write
+access to reputation, decision, operation or audit tables. Set its DSN in the file referenced by
+`PLUGIN_REPUTATION_API_DATABASE_URL_FILE`, owned by UID/GID `65534` with mode `0400`.
+Readiness checks these capabilities against PostgreSQL and remains unavailable for an overprivileged
+or incomplete role. PostgreSQL commonly grants `TEMPORARY` to `PUBLIC`; revoke it from `PUBLIC` on
+the dedicated reputation database, then grant it back only to roles which actually require it. The
+API role must also have no role memberships, database/schema `CREATE`, `MAINTAIN`, superuser,
+role/database creation, replication or row-security bypass capability.
 The two sources are mutually exclusive.
 
 Missing or invalid configuration exits with code `2` and prints field names only. Values from `.env`,

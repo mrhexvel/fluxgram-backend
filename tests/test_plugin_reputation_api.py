@@ -1,12 +1,18 @@
+import asyncio
 import json
 from collections.abc import Iterator
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 from fluxgram_backend.api.app import create_api_app
+from fluxgram_backend.api.plugin_reputation import _read_body
+from fluxgram_backend.api.reputation_app import create_reputation_api_app
 from fluxgram_backend.application.plugin_reputation import (
     PluginReputationService,
+    ReputationReadError,
     SignedReputationRecord,
 )
 from fluxgram_backend.reputation.protocol import ReputationQuery
@@ -31,6 +37,17 @@ class FakeRecordReader:
     async def get_record(self, query: ReputationQuery) -> SignedReputationRecord | None:
         self.queries.append(query)
         return self.record
+
+
+class FailingRecordReader:
+    async def get_record(self, query: ReputationQuery) -> SignedReputationRecord | None:
+        raise ReputationReadError("database unavailable")
+
+
+class SlowRecordReader:
+    async def get_record(self, query: ReputationQuery) -> SignedReputationRecord | None:
+        await asyncio.sleep(1)
+        return None
 
 
 def load_golden() -> dict[str, str]:
@@ -66,6 +83,64 @@ def test_route_is_absent_without_explicit_service() -> None:
         )
 
     assert response.status_code == 404
+
+
+def test_route_is_wired_from_production_settings() -> None:
+    golden = load_golden()
+    settings = Settings.model_validate(
+        {
+            "database_url": "postgresql+asyncpg://user:secret@database/fluxgram",
+            "reputation_api_authority_key_id": golden["authority_key_id"],
+        }
+    )
+    app = create_reputation_api_app(settings)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/plugin-reputation/query",
+            content=b"",
+            headers={"Content-Type": "application/octet-stream"},
+        )
+
+    assert response.status_code == 400
+
+
+def test_reputation_app_does_not_publish_profile_routes() -> None:
+    golden = load_golden()
+    settings = Settings.model_validate(
+        {
+            "database_url": "postgresql+asyncpg://user:secret@database/fluxgram",
+            "reputation_api_authority_key_id": golden["authority_key_id"],
+        }
+    )
+
+    with TestClient(create_reputation_api_app(settings)) as client:
+        response = client.get("/v1/profiles/user/1")
+        docs = client.get("/docs")
+        schema = client.get("/openapi.json")
+
+    assert response.status_code == 404
+    assert docs.status_code == 404
+    assert schema.status_code == 404
+
+
+def test_request_body_read_has_wall_clock_timeout() -> None:
+    async def receive() -> dict[str, object]:
+        await asyncio.sleep(1)
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/v1/plugin-reputation/query",
+            "headers": [],
+        },
+        receive,
+    )
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(_read_body(request, 0.01))
 
 
 def test_endpoint_returns_exact_verified_frame() -> None:
@@ -187,3 +262,50 @@ def test_endpoint_fails_closed_for_invalid_stored_record() -> None:
     assert response.status_code == 503
     assert response.content == b""
     assert response.headers["cache-control"] == "no-store"
+
+
+def test_endpoint_fails_closed_when_storage_is_unavailable() -> None:
+    golden = load_golden()
+    service = PluginReputationService(
+        FailingRecordReader(),
+        golden["authority_key_id"],
+    )
+    app = create_api_app(
+        Settings(),
+        FakeDatabase(),
+        plugin_reputation_service=service,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/plugin-reputation/query",
+            content=bytes.fromhex(golden["query"]),
+            headers={"Content-Type": "application/octet-stream"},
+        )
+
+    assert response.status_code == 503
+    assert response.content == b""
+
+
+def test_endpoint_bounds_storage_lookup_time() -> None:
+    golden = load_golden()
+    service = PluginReputationService(
+        SlowRecordReader(),
+        golden["authority_key_id"],
+        lookup_timeout_seconds=0.01,
+    )
+    app = create_api_app(
+        Settings(),
+        FakeDatabase(),
+        plugin_reputation_service=service,
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/plugin-reputation/query",
+            content=bytes.fromhex(golden["query"]),
+            headers={"Content-Type": "application/octet-stream"},
+        )
+
+    assert response.status_code == 503
+    assert response.content == b""

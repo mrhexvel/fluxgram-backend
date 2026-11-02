@@ -193,6 +193,36 @@ def test_reputation_repository_returns_latest_exact_record_and_writes_audit() ->
                         ),
                         {"operation_id": f"{operation_prefix}:1"},
                     )
+
+            role_name = f"reputation_api_test_{identity}"
+            await connection.execute(text(f"CREATE ROLE {role_name} NOLOGIN"))
+            await connection.execute(
+                text("REVOKE TEMPORARY ON DATABASE fluxgram_integration FROM PUBLIC")
+            )
+            await connection.execute(text(f"GRANT USAGE ON SCHEMA public TO {role_name}"))
+            await connection.execute(
+                text(
+                    "GRANT SELECT ON TABLE plugin_reputation_records "
+                    f"TO {role_name}"
+                )
+            )
+            await connection.execute(text(f"SET ROLE {role_name}"))
+            try:
+                assert await reader.is_ready()
+            finally:
+                await connection.execute(text("RESET ROLE"))
+
+            await connection.execute(
+                text(
+                    "GRANT UPDATE(state) ON TABLE plugin_reputation_decisions "
+                    f"TO {role_name}"
+                )
+            )
+            await connection.execute(text(f"SET ROLE {role_name}"))
+            try:
+                assert not await reader.is_ready()
+            finally:
+                await connection.execute(text("RESET ROLE"))
         finally:
             await transaction.rollback()
             await connection.close()

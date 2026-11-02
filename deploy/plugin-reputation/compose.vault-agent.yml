@@ -143,6 +143,60 @@ services:
       - monitoring
       - vault
 
+  public-api:
+    image: ${PLUGIN_REPUTATION_API_IMAGE:?set PLUGIN_REPUTATION_API_IMAGE to an immutable digest reference}
+    command: ["python", "-m", "fluxgram_backend", "reputation-api"]
+    environment:
+      API_HOST: 0.0.0.0
+      DATABASE_URL_FILE: /run/secrets/database-url
+      ENVIRONMENT: production
+      PLUGIN_REPUTATION_LOOKUP_TIMEOUT_SECONDS: "2"
+      REPUTATION_API_AUTHORITY_KEY_ID: ${PLUGIN_REPUTATION_AUTHORITY_KEY_ID:?set PLUGIN_REPUTATION_AUTHORITY_KEY_ID}
+      REPUTATION_API_BODY_TIMEOUT_SECONDS: "2"
+      REPUTATION_API_TRUSTED_PROXY_NETWORK: ${REPUTATION_API_TRUSTED_PROXY_NETWORK:?set REPUTATION_API_TRUSTED_PROXY_NETWORK}
+    user: "65534:65534"
+    init: true
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    cpus: 0.5
+    mem_limit: 256m
+    pids_limit: 128
+    restart: unless-stopped
+    stop_grace_period: 15s
+    expose:
+      - "8080"
+    tmpfs:
+      - /tmp:size=1048576,mode=1700,uid=65534,gid=65534
+    volumes:
+      - type: bind
+        source: ${PLUGIN_REPUTATION_API_DATABASE_URL_FILE:?set PLUGIN_REPUTATION_API_DATABASE_URL_FILE}
+        target: /run/secrets/database-url
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8080/health/ready', timeout=2).read()
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    networks:
+      - database
+      - public
+
 networks:
   database:
     external: true
@@ -150,6 +204,9 @@ networks:
   monitoring:
     external: true
     name: ${MONITORING_NETWORK:?set MONITORING_NETWORK}
+  public:
+    external: true
+    name: ${PUBLIC_NETWORK:?set PUBLIC_NETWORK}
   vault:
     external: true
     name: ${VAULT_NETWORK:?set VAULT_NETWORK}

@@ -3,6 +3,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
+from ipaddress import IPv4Address, IPv4Network
 from threading import Lock
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -70,15 +71,21 @@ class InMemoryRateLimiter:
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app: ASGIApp, limiter: InMemoryRateLimiter) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        limiter: InMemoryRateLimiter,
+        trusted_proxy_network: IPv4Network | None = None,
+    ) -> None:
         super().__init__(app)
         self._limiter = limiter
+        self._trusted_proxy_network = trusted_proxy_network
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         if not request.url.path.startswith("/v1/"):
             return await call_next(request)
 
-        client = request.client.host if request.client is not None else "unknown"
+        client = self._client_identity(request)
         retry_after = self._limiter.check(client)
         if retry_after is None:
             return await call_next(request)
@@ -91,3 +98,23 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 "message": "Too many requests",
             },
         )
+
+    def _client_identity(self, request: Request) -> str:
+        peer = request.client.host if request.client is not None else "unknown"
+        if self._trusted_proxy_network is None:
+            return peer
+
+        try:
+            trusted = IPv4Address(peer) in self._trusted_proxy_network
+        except ValueError:
+            trusted = False
+        if not trusted:
+            return peer
+
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded is None or forwarded != forwarded.strip() or "," in forwarded:
+            return peer
+        try:
+            return str(IPv4Address(forwarded))
+        except ValueError:
+            return peer

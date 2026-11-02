@@ -6,6 +6,7 @@ from collections.abc import Sequence
 import uvicorn
 
 from fluxgram_backend.api.app import create_api_app
+from fluxgram_backend.api.reputation_app import create_reputation_api_app
 from fluxgram_backend.bot.app import create_bot_app
 from fluxgram_backend.bot.webhook import get_webhook_info, set_webhook
 from fluxgram_backend.database.migrations import run_migrations
@@ -17,6 +18,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="fluxgram-backend")
     subcommands = parser.add_subparsers(dest="command", required=True)
     subcommands.add_parser("api")
+    subcommands.add_parser("reputation-api")
     subcommands.add_parser("bot")
     subcommands.add_parser("migrate")
 
@@ -35,6 +37,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.command == "api":
         uvicorn.run(
             create_api_app(settings),
+            host=settings.api_host,
+            port=settings.api_port,
+            log_config=None,
+        )
+        return 0
+
+    if arguments.command == "reputation-api":
+        uvicorn.run(
+            create_reputation_api_app(settings),
             host=settings.api_host,
             port=settings.api_port,
             log_config=None,

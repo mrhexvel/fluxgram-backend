@@ -1,9 +1,13 @@
+import asyncio
 from typing import cast
 
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
-from fluxgram_backend.application.plugin_reputation import PluginReputationService
+from fluxgram_backend.application.plugin_reputation import (
+    PluginReputationService,
+    ReputationReadError,
+)
 from fluxgram_backend.reputation.protocol import MAX_QUERY_BYTES, ProtocolError, ReputationQuery
 from fluxgram_backend.reputation.verification import VerificationError
 
@@ -30,15 +34,18 @@ async def query_plugin_reputation(request: Request) -> Response:
         if int(content_length) > MAX_QUERY_BYTES:
             return Response(status_code=413, headers=NO_STORE_HEADERS)
 
-    encoded_query = bytearray()
-    async for chunk in request.stream():
-        if len(chunk) > MAX_QUERY_BYTES - len(encoded_query):
-            return Response(status_code=413, headers=NO_STORE_HEADERS)
-
-        encoded_query.extend(chunk)
+    try:
+        encoded_query = await _read_body(
+            request,
+            request.app.state.reputation_api_body_timeout_seconds,
+        )
+    except TimeoutError:
+        return Response(status_code=408, headers=NO_STORE_HEADERS)
+    except ProtocolError:
+        return Response(status_code=413, headers=NO_STORE_HEADERS)
 
     try:
-        query = ReputationQuery.decode(bytes(encoded_query))
+        query = ReputationQuery.decode(encoded_query)
     except ProtocolError:
         return Response(status_code=400, headers=NO_STORE_HEADERS)
 
@@ -46,7 +53,7 @@ async def query_plugin_reputation(request: Request) -> Response:
 
     try:
         result = await service.lookup(query)
-    except (ProtocolError, VerificationError):
+    except (ProtocolError, ReputationReadError, VerificationError):
         return Response(status_code=503, headers=NO_STORE_HEADERS)
 
     if result is None:
@@ -57,3 +64,13 @@ async def query_plugin_reputation(request: Request) -> Response:
         media_type="application/octet-stream",
         headers=NO_STORE_HEADERS,
     )
+
+
+async def _read_body(request: Request, timeout_seconds: float) -> bytes:
+    encoded_query = bytearray()
+    async with asyncio.timeout(timeout_seconds):
+        async for chunk in request.stream():
+            if len(chunk) > MAX_QUERY_BYTES - len(encoded_query):
+                raise ProtocolError("Reputation query exceeds size limit")
+            encoded_query.extend(chunk)
+    return bytes(encoded_query)
